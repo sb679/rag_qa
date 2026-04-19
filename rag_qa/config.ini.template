@@ -57,8 +57,31 @@ default_supervisor_password = demo-supervisor-pass-change-me
 parent_chunk_size = 1200  # 父文档块大小
 child_chunk_size = 300    # 子文档块大小
 chunk_overlap = 50        # 块重叠大小
+chunking_mode = rule      # 可选: rule / hybrid
+chunking_mode_by_source = {'default': 'rule', 'mining': 'hybrid'}
+struct_min_paragraph_chars = 80
+semantic_sim_threshold = 0.74
+semantic_min_chunk_size = 220
+semantic_max_chunk_size = 520
+semantic_model_path = models/bge-m3
 retrieval_k = 5           # 检索返回的候选数量
 candidate_m = 2           # 最终重排序后的候选数量
+
+[graphrag]
+graph_parent_chunk_size = 1600  # 图谱抽取父块大小
+graph_child_chunk_size = 500    # 图谱抽取子块大小
+graph_chunk_overlap = 100       # 图谱抽取块重叠大小
+
+[ocr]
+enable = true
+pdf_image_ocr_enable = true
+pdf_ocr_min_image_width_ratio = 0.3
+pdf_ocr_min_image_height_ratio = 0.3
+doc_image_ocr_enable = true
+ppt_image_ocr_enable = true
+
+[loader_fallback]
+dedoc_fallback_enable = true
 ```
 
 ### 日志配置

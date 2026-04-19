@@ -147,6 +147,13 @@ function Start-LoggedProcess {
 Write-Section 'EduRAG launcher'
 Write-Host "Workspace root: $root"
 
+Write-Section 'Environment bootstrap'
+$envSetupScript = Join-Path $root 'scripts\setup_edurag_env.ps1'
+if (-not (Test-Path $envSetupScript)) {
+    throw "Environment setup script not found: $envSetupScript"
+}
+& $envSetupScript -PersistUser
+
 if (-not (Test-Path $pythonExe)) {
     throw "Python interpreter not found: $pythonExe"
 }

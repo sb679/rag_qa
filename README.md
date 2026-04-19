@@ -129,6 +129,18 @@ cp .env.example .env
 
 在 `.env` 中填写真实密钥。服务启动时会优先读取 `EDURAG_*` 环境变量。
 
+Windows 工程化密钥初始化（推荐）：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+& .\scripts\setup_edurag_env.ps1 -PersistUser
+```
+
+说明：
+- 脚本会将可用的 `DASHSCOPE_API_KEY` 迁移/对齐到 `EDURAG_DASHSCOPE_API_KEY`。
+- `config.ini` 保持 `demo-key-change-me` 占位，不在仓库落地真实密钥。
+- `start_edurag.ps1` 已集成该脚本，启动时会自动校验并加载。
+
 ### 配置
 
 ```bash

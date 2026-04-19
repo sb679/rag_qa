@@ -49,31 +49,47 @@ class RAGSystem:
         self.conversation_manager = conversation_manager or get_conversation_manager()
         #   定义方法，生成答案
 
-    #   定义类似私有方法，使用回溯问题进行检索 （注意讲义中没有加source_filter参数，这里补齐了）
-    def _retrieve_with_backtracking(self, query, source_filter):
-        logger.info(f"使用回溯问题策略进行检索 (查询: '{query}')")
-        #   获取回溯问题生成的 Prompt 模板
-        backtrack_prompt_template = RAGPrompts.backtracking_prompt()  # 使用 template 后缀区分
+    def _llm_to_text(self, prompt: str) -> str:
+        """兼容 llm 返回 str 或流式生成器，统一收敛为文本。"""
+        output = self.llm(prompt)
+        if isinstance(output, str):
+            return output.strip()
+
+        parts = []
+        for token in output:
+            if token:
+                parts.append(str(token))
+        return "".join(parts).strip()
+
+    #   定义类似私有方法，使用场景重构进行检索
+    def _retrieve_with_scene_reconstruction(self, query, source_filter, retrieval_k):
+        logger.info(f"使用场景重构策略进行检索 (查询: '{query}')")
+        #   获取场景重构 Prompt 模板
+        backtrack_prompt_template = RAGPrompts.scene_reconstruction_prompt()
         try:
             #   调用大语言模型生成回溯问题
-            simplified_query = self.llm(backtrack_prompt_template.format(query=query)).strip()
+            simplified_query = self._llm_to_text(backtrack_prompt_template.format(query=query))
             logger.info(f"生成的回溯问题: '{simplified_query}'")
             #   使用回溯问题进行检索，并返回检索结果
             return self.vector_store.hybrid_search_with_rerank(
-                simplified_query, k=conf.RETRIEVAL_K, source_filter=source_filter  # 使用 K
+                simplified_query, k=retrieval_k, source_filter=source_filter
             )
         except Exception as e:
-            logger.error(f"回溯问题策略执行失败: {e}")
+            logger.error(f"场景重构策略执行失败: {e}")
             return []
 
+    # 历史兼容
+    def _retrieve_with_backtracking(self, query, source_filter, retrieval_k):
+        return self._retrieve_with_scene_reconstruction(query, source_filter, retrieval_k)
+
     #   定义类似私有方法，使用子查询进行检索（注意讲义中没有加source_filter参数，这里补齐了）
-    def _retrieve_with_subqueries(self, query, source_filter):
+    def _retrieve_with_subqueries(self, query, source_filter, candidate_m):
         logger.info(f"使用子查询策略进行检索 (查询: '{query}')")
         #   获取子查询生成的 Prompt 模板
         subquery_prompt_template = RAGPrompts.subquery_prompt()  # 使用 template 后缀区分
         try:
             #   调用大语言模型生成子查询列表
-            subqueries_text = self.llm(subquery_prompt_template.format(query=query)).strip()
+            subqueries_text = self._llm_to_text(subquery_prompt_template.format(query=query))
             # print(f'subqueries_text--》{subqueries_text}')
             subqueries = [q.strip() for q in subqueries_text.split("\n") if q.strip()]
             logger.info(f"生成的子查询: {subqueries}")
@@ -86,9 +102,9 @@ class RAGSystem:
             for sub_q in subqueries:
                 #   使用子查询进行检索，并将结果添加到列表中
                 #   这里对每个子查询都执行了 hybrid search + rerank，开销可能较大
-                # 这里面的k是conf.CANDIDATE_M//2 onf.CANDIDATE_M是它的一半
+                subquery_k = max(1, candidate_m // 2)
                 docs = self.vector_store.hybrid_search_with_rerank(
-                    sub_q, k=conf.CANDIDATE_M // 2, source_filter=source_filter  # 使用 K
+                    sub_q, k=subquery_k, source_filter=source_filter
                 )
                 all_docs.extend(docs)
                 logger.info(f"子查询 '{sub_q}' 检索到 {len(docs)} 个文档")
@@ -106,23 +122,23 @@ class RAGSystem:
             return []
 
     #   定义私有方法，使用假设文档进行检索（HyDE）
-    def _retrieve_with_hyde(self, query, source_filter):
+    def _retrieve_with_hyde(self, query, source_filter, retrieval_k):
         logger.info(f"使用 HyDE 策略进行检索 (查询: '{query}')")
         #   获取假设问题生成的 Prompt 模板
         hyde_prompt_template = RAGPrompts.hyde_prompt()  # 使用 template 后缀区分
         #   调用大语言模型生成假设答案
         try:
-            hypo_answer = self.llm(hyde_prompt_template.format(query=query)).strip()
+            hypo_answer = self._llm_to_text(hyde_prompt_template.format(query=query))
             logger.info(f"HyDE 生成的假设答案: '{hypo_answer}'")
             #   使用假设答案进行检索，并返回检索结果
             return self.vector_store.hybrid_search_with_rerank(
-                hypo_answer, k=conf.RETRIEVAL_K, source_filter=source_filter  # 使用 K 而非 M
+                hypo_answer, k=retrieval_k, source_filter=source_filter
             )
         except Exception as e:
             logger.error(f"HyDE 策略执行失败: {e}")
             return []
 
-    def retrieve_and_merge(self, query, source_filter=None, strategy=None):
+    def retrieve_and_merge(self, query, source_filter=None, strategy=None, retrieval_k=None, candidate_m=None):
         #   如果未指定检索策略，则使用策略选择器选择
         if not strategy:
             strategy = self.strategy_selector.select_strategy(query)
@@ -132,24 +148,27 @@ class RAGSystem:
             "回溯问题检索": "场景重构检索",
         }.get(strategy, strategy)
 
+        resolved_k = retrieval_k if retrieval_k is not None else conf.RETRIEVAL_K
+        resolved_m = candidate_m if candidate_m is not None else conf.CANDIDATE_M
+
         # 根据检索策略选择不同的检索方式
         ranked_chunks = []  # 初始化
         if normalized_strategy == "场景重构检索":
-            ranked_chunks = self._retrieve_with_backtracking(query, source_filter)
+            ranked_chunks = self._retrieve_with_scene_reconstruction(query, source_filter, resolved_k)
         elif normalized_strategy == '子查询检索':
-            ranked_chunks = self._retrieve_with_subqueries(query, source_filter)
+            ranked_chunks = self._retrieve_with_subqueries(query, source_filter, resolved_m)
         elif normalized_strategy == "假设问题检索":
-            ranked_chunks = self._retrieve_with_hyde(query, source_filter)
+            ranked_chunks = self._retrieve_with_hyde(query, source_filter, resolved_k)
         else:
             # 直接检索：
             logger.info(f"使用直接检索策略 (查询: '{query}')")
             ranked_chunks = self.vector_store.hybrid_search_with_rerank(
-                query, k=conf.RETRIEVAL_K, source_filter=source_filter
+                query, k=resolved_k, source_filter=source_filter
             )  # 注意 hybrid_search_with_rerank 返回的是 rerank 后的父文档
             # print(f'ranked_chunks--》{ranked_chunks}')
 
         logger.info(f"策略 '{normalized_strategy}' 检索到 {len(ranked_chunks)} 个候选文档 (可能已是父文档)")
-        final_context_docs = ranked_chunks[:conf.CANDIDATE_M]
+        final_context_docs = ranked_chunks[:resolved_m]
         logger.info(f"最终选取 {len(final_context_docs)} 个文档作为上下文")
         return final_context_docs
 

@@ -14,6 +14,9 @@ from io import BytesIO  # 用于将字节流转换为图片
 import numpy as np  # 用于处理数组
 from langchain_core.documents import Document
 from langchain_core.document_loaders import BaseLoader
+from base import Config
+
+conf = Config()
 
 
 class OCRDOCLoader(BaseLoader):
@@ -39,9 +42,9 @@ class OCRDOCLoader(BaseLoader):
         yield Document(page_content=line, metadata={"source": self.filepath})
 
     def doc2text(self, filepath):
-
-        # 创建OCR识别对象
-        ocr = get_ocr()
+        # 根据配置决定是否对 DOCX 内嵌图片执行 OCR。
+        enable_image_ocr = bool(conf.OCR_ENABLE and conf.DOC_IMAGE_OCR_ENABLE)
+        ocr = get_ocr() if enable_image_ocr else None
         # print(f'ocr--》{ocr}')  # 输出OCR对象信息
 
         # 读取Word文档
@@ -86,18 +89,17 @@ class OCRDOCLoader(BaseLoader):
                 resp += block.text.strip() + "\n"  # 将段落文本加入到返回字符串中
                 # 获取段落中的所有图片
                 images = block._element.xpath('.//pic:pic')
-                for image in images:
-                    # 遍历图片，获取图片ID
-                    for img_id in image.xpath('.//a:blip/@r:embed'):
-                        part = doc.part.related_parts[img_id]  # 根据图片ID获取图片对象
-                        if isinstance(part, ImagePart):  # 如果该部分是图片
-                            # BytesIO 是 Python 内置的 io 模块中的一个类，用于在内存中读写二进制数据
-                            # part._blob 通常表示从某个文档（如 DOCX 文件）中提取的二进制内容。
-                            image = Image.open(BytesIO(part._blob))  # 打开图片
-                            result, _ = ocr(np.array(image))  # 使用OCR识别图片中的文字
-                            if result:  # 如果识别结果不为空
-                                ocr_result = [line[1] for line in result]  # 提取识别出的文字
-                                resp += "\n".join(ocr_result)  # 将识别结果加入返回文本中
+                if enable_image_ocr and ocr is not None:
+                    for image in images:
+                        # 遍历图片，获取图片ID
+                        for img_id in image.xpath('.//a:blip/@r:embed'):
+                            part = doc.part.related_parts[img_id]  # 根据图片ID获取图片对象
+                            if isinstance(part, ImagePart):  # 如果该部分是图片
+                                image = Image.open(BytesIO(part._blob))  # 打开图片
+                                result, _ = ocr(np.array(image))  # 使用OCR识别图片中的文字
+                                if result:  # 如果识别结果不为空
+                                    ocr_result = [line[1] for line in result]  # 提取识别出的文字
+                                    resp += "\n".join(ocr_result)  # 将识别结果加入返回文本中
             # 如果块是表格类型
             elif isinstance(block, Table):
                 # 遍历表格中的所有行和单元格

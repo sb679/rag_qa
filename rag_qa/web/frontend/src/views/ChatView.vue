@@ -254,6 +254,16 @@
           @keydown.shift.enter.exact="inputText += '\n'"
         />
         <div class="input-foot">
+          <div class="input-options">
+            <span class="option-label">来源详情</span>
+            <el-switch
+              v-model="includeSourceDetails"
+              inline-prompt
+              active-text="开"
+              inactive-text="关"
+              size="small"
+            />
+          </div>
           <el-upload
             class="question-image-uploader"
             :auto-upload="false"
@@ -287,7 +297,16 @@
             <el-tag v-if="panelInfo.strategy" type="warning" effect="light" size="small">
               {{ panelInfo.strategy }}
             </el-tag>
+            <el-tag
+              v-if="panelInfo.error_type"
+              :type="panelInfo.error_type === 'rate_limit' ? 'danger' : (panelInfo.error_type === 'auth' ? 'warning' : 'info')"
+              effect="light"
+              size="small"
+            >
+              {{ formatRetrievalErrorType(panelInfo.error_type) }}<template v-if="panelInfo.error_code">({{ panelInfo.error_code }})</template>
+            </el-tag>
           </div>
+          <div v-if="panelInfo.error_message" class="error-hint">{{ truncate(panelInfo.error_message, 80) }}</div>
           <div v-if="panelInfo.query_type === '专业咨询'" class="count-row">
             <div class="cnt"><div class="cnt-n">{{ panelInfo.candidate_count }}</div><div class="cnt-l">初始召回</div></div>
             <el-icon color="#dcdfe6"><ArrowRight /></el-icon>
@@ -420,6 +439,7 @@ const isTyping         = ref(false)
 const currentQuery     = ref('')
 const questionImageFile = ref(null)
 const questionImagePreview = ref('')
+const includeSourceDetails = ref(false)
 
 // 当前活跃消息（流式填充）
 let _activeMsg = null
@@ -474,6 +494,12 @@ const { state, isSupervisor } = useStore()
 const SESSION_GREETING = '江西理工大学的学子永不认输！很高兴为你服务，请问今天想了解哪方面的采矿安全问题？'
 const renderMd = (t) => marked.parse(t || '')
 const truncate = (s, n) => s?.length > n ? s.slice(0, n) + '…' : (s || '')
+const formatRetrievalErrorType = (type) => {
+  if (type === 'auth') return '鉴权错误'
+  if (type === 'rate_limit') return '限流错误'
+  if (type === 'upstream') return '上游服务异常'
+  return '检索异常'
+}
 const formatDuration = (seconds) => {
   const value = Number(seconds) || 0
   if (value < 1) return `${Math.max(1, Math.round(value * 1000))}ms`
@@ -687,9 +713,22 @@ async function doSend() {
 
   try {
     if (imageFile) {
-      await streamChatWithImage(query, imageFile, currentSessionId.value, null, callbacks)
+      await streamChatWithImage(
+        query,
+        imageFile,
+        currentSessionId.value,
+        null,
+        includeSourceDetails.value,
+        callbacks,
+      )
     } else {
-      await streamChat(query, currentSessionId.value, null, callbacks)
+      await streamChat(
+        query,
+        currentSessionId.value,
+        null,
+        includeSourceDetails.value,
+        callbacks,
+      )
     }
   } finally {
     clearQuestionImage()
@@ -1098,7 +1137,9 @@ onMounted(async () => {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .question-image-meta small { font-size: 12px; color: #909399; }
-.input-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; gap: 12px; }
+.input-foot { display: flex; justify-content: flex-end; align-items: center; margin-top: 8px; gap: 12px; }
+.input-options { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; }
+.option-label { font-size: 12px; color: #606266; }
 .question-image-uploader { display: inline-flex; }
 .char-count { font-size: 12px; color: #c0c4cc; }
 
@@ -1117,6 +1158,7 @@ onMounted(async () => {
 .p-section { padding: 12px 16px 0; }
 .p-label   { font-size: 12px; color: #909399; margin-bottom: 6px; }
 .tag-row   { display: flex; gap: 6px; flex-wrap: wrap; }
+.error-hint { margin-top: 6px; font-size: 12px; color: #e6a23c; line-height: 1.4; }
 
 .count-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
 .cnt       { text-align: center; }

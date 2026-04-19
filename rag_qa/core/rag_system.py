@@ -39,22 +39,38 @@ class RAGSystem:
         self.strategy_selector = StrategySelector()
         #   定义方法，生成答案
 
-    #   定义类似私有方法，使用回溯问题进行检索
-    def _retrieve_with_backtracking(self, query):
-        logger.info(f"使用回溯问题策略进行检索 (查询: '{query}')")
-        #   获取回溯问题生成的 Prompt 模板
-        backtrack_prompt_template = RAGPrompts.backtracking_prompt()  # 使用 template 后缀区分
+    def _llm_to_text(self, prompt):
+        """兼容 llm 返回 str 或流式生成器，统一收敛为文本。"""
+        output = self.llm(prompt)
+        if isinstance(output, str):
+            return output.strip()
+
+        parts = []
+        for token in output:
+            if token:
+                parts.append(str(token))
+        return "".join(parts).strip()
+
+    #   定义类似私有方法，使用场景重构进行检索
+    def _retrieve_with_scene_reconstruction(self, query):
+        logger.info(f"使用场景重构策略进行检索 (查询: '{query}')")
+        #   获取场景重构 Prompt 模板
+        backtrack_prompt_template = RAGPrompts.scene_reconstruction_prompt()
         try:
             #   调用大语言模型生成回溯问题
-            simplified_query = self.llm(backtrack_prompt_template.format(query=query)).strip()
+            simplified_query = self._llm_to_text(backtrack_prompt_template.format(query=query))
             logger.info(f"生成的回溯问题: '{simplified_query}'")
             #   使用回溯问题进行检索，并返回检索结果
             return self.vector_store.hybrid_search_with_rerank(
                 simplified_query, k=conf.RETRIEVAL_K  # 使用 K
             )
         except Exception as e:
-            logger.error(f"回溯问题策略执行失败: {e}")
+            logger.error(f"场景重构策略执行失败: {e}")
             return []
+
+    # 历史兼容
+    def _retrieve_with_backtracking(self, query):
+        return self._retrieve_with_scene_reconstruction(query)
 
     #   定义类似私有方法，使用子查询进行检索
     def _retrieve_with_subqueries(self, query):
@@ -63,7 +79,7 @@ class RAGSystem:
         subquery_prompt_template = RAGPrompts.subquery_prompt() # 使用 template 后缀区分
         try:
             #   调用大语言模型生成子查询列表
-            subqueries_text = self.llm(subquery_prompt_template.format(query=query)).strip()
+            subqueries_text = self._llm_to_text(subquery_prompt_template.format(query=query))
             # print(f'subqueries_text--》{subqueries_text}')
             subqueries = [q.strip() for q in subqueries_text.split("\n") if q.strip()]
             logger.info(f"生成的子查询: {subqueries}")
@@ -102,7 +118,7 @@ class RAGSystem:
         hyde_prompt_template = RAGPrompts.hyde_prompt() # 使用 template 后缀区分
         #   调用大语言模型生成假设答案
         try:
-            hypo_answer = self.llm(hyde_prompt_template.format(query=query)).strip()
+            hypo_answer = self._llm_to_text(hyde_prompt_template.format(query=query))
             logger.info(f"HyDE 生成的假设答案: '{hypo_answer}'")
             #   使用假设答案进行检索，并返回检索结果
             return self.vector_store.hybrid_search_with_rerank(
@@ -116,13 +132,18 @@ class RAGSystem:
         #   如果未指定检索策略，则使用策略选择器选择
         if not strategy:
             strategy = self.strategy_selector.select_strategy(query)
+
+        normalized_strategy = {
+            "回溯问题检索": "场景重构检索",
+        }.get(strategy, strategy)
+
         # 根据检索策略选择不同的检索方式
         ranked_chunks = [] # 初始化
-        if strategy == "回溯问题检索":
-            ranked_chunks = self._retrieve_with_backtracking(query)
-        elif strategy == '子查询检索':
+        if normalized_strategy == "场景重构检索":
+            ranked_chunks = self._retrieve_with_scene_reconstruction(query)
+        elif normalized_strategy == '子查询检索':
             ranked_chunks = self._retrieve_with_subqueries(query)
-        elif strategy == "假设问题检索":
+        elif normalized_strategy == "假设问题检索":
             ranked_chunks = self._retrieve_with_hyde(query)
         else:
             # 直接检索：
@@ -132,7 +153,7 @@ class RAGSystem:
             )  # 注意 hybrid_search_with_rerank 返回的是 rerank 后的父文档
             # print(f'ranked_chunks--》{ranked_chunks}')
 
-        logger.info(f"策略 '{strategy}' 检索到 {len(ranked_chunks)} 个候选文档 (可能已是父文档)")
+        logger.info(f"策略 '{normalized_strategy}' 检索到 {len(ranked_chunks)} 个候选文档 (可能已是父文档)")
         final_context_docs = ranked_chunks[:conf.CANDIDATE_M]
         logger.info(f"最终选取 {len(final_context_docs)} 个文档作为上下文")
         return final_context_docs

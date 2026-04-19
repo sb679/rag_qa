@@ -76,6 +76,7 @@ async def chat_send(request: ChatRequest):
             query         = request.query,
             session_id    = request.session_id,
             source_filter = request.source_filter,
+            include_source_details = request.include_source_details,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
@@ -100,6 +101,7 @@ async def chat_send_image(
     query: str = Form(""),
     session_id: str | None = Form(None),
     source_filter: str | None = Form(None),
+    include_source_details: bool = Form(True),
 ):
     """
     先 OCR 图片，再把识别文本拼入问题进入现有 RAG 流。
@@ -129,6 +131,7 @@ async def chat_send_image(
                 query         = merged_query,
                 session_id    = session_id,
                 source_filter = source_filter,
+                include_source_details = include_source_details,
             ):
                 if event.get("type") == "retrieval_info":
                     event = {
