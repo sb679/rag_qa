@@ -52,6 +52,31 @@ _llm_circuit_open_until = 0.0
 _llm_circuit_lock = threading.Lock()
 
 
+def _extract_error_code(exc: Exception) -> Optional[int]:
+    text = str(exc)
+    match = re.search(r"\b(401|403|408|409|429|500|502|503|504)\b", text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return None
+    return None
+
+
+def _classify_error(exc: Exception) -> Dict[str, Any]:
+    text = str(exc)
+    lowered = text.lower()
+    code = _extract_error_code(exc)
+
+    if code in (401, 403) or "无效的令牌" in text or "invalid" in lowered and "token" in lowered:
+        return {"error_type": "auth", "error_code": code, "error_message": text}
+    if code == 429 or "rate" in lowered and "limit" in lowered or "too many requests" in lowered or "限流" in text:
+        return {"error_type": "rate_limit", "error_code": code, "error_message": text}
+    if code is not None and code >= 500:
+        return {"error_type": "upstream", "error_code": code, "error_message": text}
+    return {"error_type": "unknown", "error_code": code, "error_message": text}
+
+
 def _is_llm_circuit_open() -> bool:
     return time.time() < _llm_circuit_open_until
 
@@ -158,6 +183,22 @@ _SOURCE_DISPLAY = {
 _BASE_SCORES = [0.94, 0.88, 0.82, 0.76, 0.71]
 
 
+def _normalize_strategy_name(strategy: Optional[str]) -> Optional[str]:
+    if strategy == "回溯问题检索":
+        return "场景重构检索"
+    return strategy
+
+
+def _resolve_km_by_strategy(strategy: Optional[str], use_strategy_km_policy: bool) -> tuple[int, int]:
+    if not use_strategy_km_policy:
+        return _config.RETRIEVAL_K, _config.CANDIDATE_M
+
+    normalized = _normalize_strategy_name(strategy)
+    if normalized in {"子查询检索", "场景重构检索"}:
+        return 8, 3
+    return 5, 2
+
+
 def _build_source_details(context_docs: List[Any], query: str, source_filter: Optional[str]) -> List[Dict[str, Any]]:
     """构建前端来源详情：包含完整父块与命中的子块片段。"""
     if _vector_store is None:
@@ -207,23 +248,33 @@ def _run_full_rag(
     source_filter:  Optional[str],
     query_type:     str,
     history_context: str,
+    include_source_details: bool = True,
+    use_strategy_km_policy: bool = False,
 ) -> RagResult:
     t0 = time.time()
 
     if query_type == "专业咨询":
-        strategy     = _rag_system.strategy_selector.select_strategy(query)
+        strategy     = _normalize_strategy_name(_rag_system.strategy_selector.select_strategy(query))
+        retrieval_k, candidate_m = _resolve_km_by_strategy(strategy, use_strategy_km_policy)
         context_docs = _rag_system.retrieve_and_merge(
-            query, source_filter=source_filter, strategy=strategy
+            query,
+            source_filter=source_filter,
+            strategy=strategy,
+            retrieval_k=retrieval_k,
+            candidate_m=candidate_m,
         )
 
-        sources = _build_source_details(context_docs, query, source_filter)
+        sources = _build_source_details(context_docs, query, source_filter) if include_source_details else []
 
         retrieval_info = {
             "query_type":      query_type,
             "strategy":        strategy,
-            "candidate_count": _config.RETRIEVAL_K,
+            "candidate_count": retrieval_k,
             "final_count":     len(context_docs),
             "sources":         sources,
+            "error_type":      None,
+            "error_code":      None,
+            "error_message":   None,
             "time":            0.0,
         }
         context = "\n\n---\n\n".join([doc.page_content for doc in context_docs])
@@ -234,6 +285,9 @@ def _run_full_rag(
             "candidate_count": 0,
             "final_count":     0,
             "sources":         [],
+            "error_type":      None,
+            "error_code":      None,
+            "error_message":   None,
             "time":            0.0,
         }
         context = ""
@@ -309,24 +363,34 @@ def _prepare_query_plan(
     source_filter: Optional[str],
     query_type: str,
     history_context: str,
+    include_source_details: bool = True,
+    use_strategy_km_policy: bool = False,
 ) -> Dict[str, Any]:
     """准备检索信息与主回答 Prompt，不生成最终答案。"""
     t0 = time.time()
 
     if query_type == "专业咨询":
-        strategy = _rag_system.strategy_selector.select_strategy(query)
+        strategy = _normalize_strategy_name(_rag_system.strategy_selector.select_strategy(query))
+        retrieval_k, candidate_m = _resolve_km_by_strategy(strategy, use_strategy_km_policy)
         context_docs = _rag_system.retrieve_and_merge(
-            query, source_filter=source_filter, strategy=strategy
+            query,
+            source_filter=source_filter,
+            strategy=strategy,
+            retrieval_k=retrieval_k,
+            candidate_m=candidate_m,
         )
 
-        sources = _build_source_details(context_docs, query, source_filter)
+        sources = _build_source_details(context_docs, query, source_filter) if include_source_details else []
 
         retrieval_info = {
             "query_type":      query_type,
             "strategy":        strategy,
-            "candidate_count": _config.RETRIEVAL_K,
+            "candidate_count": retrieval_k,
             "final_count":     len(context_docs),
             "sources":         sources,
+            "error_type":      None,
+            "error_code":      None,
+            "error_message":   None,
             "time":            0.0,
         }
         context = "\n\n---\n\n".join([doc.page_content for doc in context_docs])
@@ -337,6 +401,9 @@ def _prepare_query_plan(
             "candidate_count": 0,
             "final_count":     0,
             "sources":         [],
+            "error_type":      None,
+            "error_code":      None,
+            "error_message":   None,
             "time":            0.0,
         }
         context = ""
@@ -643,6 +710,7 @@ async def stream_chat_response(
     query:         str,
     session_id:    Optional[str],
     source_filter: Optional[str],
+    include_source_details: bool = True,
 ) -> AsyncGenerator[Dict, None]:
     """
     SSE 事件流：
@@ -691,7 +759,14 @@ async def stream_chat_response(
         plan = await asyncio.wait_for(
             loop.run_in_executor(
                 None,
-                lambda: _prepare_query_plan(query, source_filter, query_type, history_context),
+                lambda: _prepare_query_plan(
+                    query,
+                    source_filter,
+                    query_type,
+                    history_context,
+                    include_source_details=include_source_details,
+                    use_strategy_km_policy=True,
+                ),
             ),
             timeout=_PLAN_TIMEOUT_SEC,
         )
@@ -719,10 +794,16 @@ async def stream_chat_response(
         _record_llm_success()
     except TimeoutError as e:
         _record_llm_failure()
+        err_meta = _classify_error(e)
+        retrieval_info = {**retrieval_info, **err_meta}
+        yield {"type": "retrieval_info", "data": retrieval_info}
         yield {"type": "error", "data": f"主答案生成超时: {e}"}
         return
     except Exception as e:
         _record_llm_failure()
+        err_meta = _classify_error(e)
+        retrieval_info = {**retrieval_info, **err_meta}
+        yield {"type": "retrieval_info", "data": retrieval_info}
         yield {"type": "error", "data": f"主答案流式生成失败: {e}"}
         return
 

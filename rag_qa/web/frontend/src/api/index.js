@@ -100,11 +100,16 @@ export const feedbackAPI = {
  *   onError(msg),
  * }}
  */
-export async function streamChat(query, sessionId, sourceFilter, callbacks) {
+export async function streamChat(query, sessionId, sourceFilter, includeSourceDetails, callbacks) {
   const { onRetrievalInfo, onToken, onLlmToken, onDone, onError } = callbacks
   await _fetchSSE(
     '/api/chat/send',
-    { query, session_id: sessionId, source_filter: sourceFilter },
+    {
+      query,
+      session_id: sessionId,
+      source_filter: sourceFilter,
+      include_source_details: includeSourceDetails,
+    },
     (event) => {
       if      (event.type === 'retrieval_info') onRetrievalInfo?.(event.data)
       else if (event.type === 'token')          onToken?.(event.data)
@@ -116,12 +121,13 @@ export async function streamChat(query, sessionId, sourceFilter, callbacks) {
   )
 }
 
-export async function streamChatWithImage(query, imageFile, sessionId, sourceFilter, callbacks) {
+export async function streamChatWithImage(query, imageFile, sessionId, sourceFilter, includeSourceDetails, callbacks) {
   const { onRetrievalInfo, onToken, onLlmToken, onDone, onError } = callbacks
   const form = new FormData()
   form.append('query', query || '')
   if (sessionId) form.append('session_id', sessionId)
   if (sourceFilter) form.append('source_filter', sourceFilter)
+  form.append('include_source_details', includeSourceDetails ? 'true' : 'false')
   form.append('image', imageFile)
 
   await _fetchSSE(

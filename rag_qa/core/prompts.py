@@ -83,9 +83,9 @@ class RAGPrompts:
             input_variables=["query"],
         )
 
-    #   定义回溯问题生成的 Prompt 模板
+    #   定义场景重构问题生成的 Prompt 模板（兼容旧的 backtracking 命名）
     @staticmethod
-    def backtracking_prompt():
+    def scene_reconstruction_prompt():
         #   创建并返回 PromptTemplate 对象
         return PromptTemplate(
             template="""  
@@ -96,6 +96,11 @@ class RAGPrompts:
             #   定义输入变量
             input_variables=["query"],
         )
+
+    @staticmethod
+    def backtracking_prompt():
+        # 历史兼容：旧代码仍可调用 backtracking_prompt
+        return RAGPrompts.scene_reconstruction_prompt()
 if __name__ == '__main__':
     # rga_prompt = RAGPrompts.rag_prompt()
     # result = rga_prompt.format(context="黑马程序员", question="这个机构叫什么名称", phone="12345")

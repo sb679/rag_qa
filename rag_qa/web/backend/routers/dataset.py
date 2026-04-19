@@ -23,7 +23,7 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Header
 from fastapi.responses import StreamingResponse, FileResponse, Response
 from typing import Optional
 
-from core.document_processor import process_single_file
+from core.document_processor import process_single_file, SUPPORTED_EXTENSIONS
 from core.object_storage import get_object_storage
 from core.auth_manager import get_auth_manager
 import rag_service
@@ -32,7 +32,7 @@ router = APIRouter()
 auth_manager = get_auth_manager()
 
 # 支持的文件类型
-ALLOWED_EXT = {".pdf", ".docx", ".ppt", ".pptx", ".txt", ".md", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
+ALLOWED_EXT = SUPPORTED_EXTENSIONS
 KNOWLEDGE_FILES_ROOT = Path(_rag_qa_path) / "user_data" / "knowledge_files"
 
 
@@ -123,6 +123,7 @@ async def upload_document(
                     conf.PARENT_CHUNK_SIZE,
                     conf.CHILD_CHUNK_SIZE,
                     conf.CHUNK_OVERLAP,
+                    source=source,
                 ),
             )
 

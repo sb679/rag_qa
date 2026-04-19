@@ -44,6 +44,99 @@ class Config:
         self.PARENT_CHUNK_SIZE = self._get_int('EDURAG_PARENT_CHUNK_SIZE', 'retrieval', 'parent_chunk_size', 1200)
         self.CHILD_CHUNK_SIZE = self._get_int('EDURAG_CHILD_CHUNK_SIZE', 'retrieval', 'child_chunk_size', 300)
         self.CHUNK_OVERLAP = self._get_int('EDURAG_CHUNK_OVERLAP', 'retrieval', 'chunk_overlap', 50)
+        self.CHUNKING_MODE = self._get_str('EDURAG_CHUNKING_MODE', 'retrieval', 'chunking_mode', 'rule').strip().lower()
+        self.CHUNKING_MODE_BY_SOURCE = self._get_mapping(
+            'EDURAG_CHUNKING_MODE_BY_SOURCE',
+            'retrieval',
+            'chunking_mode_by_source',
+            {'default': self.CHUNKING_MODE},
+        )
+        self.STRUCT_MIN_PARAGRAPH_CHARS = self._get_int(
+            'EDURAG_STRUCT_MIN_PARAGRAPH_CHARS',
+            'retrieval',
+            'struct_min_paragraph_chars',
+            80,
+        )
+        self.SEMANTIC_SIM_THRESHOLD = self._get_float(
+            'EDURAG_SEMANTIC_SIM_THRESHOLD',
+            'retrieval',
+            'semantic_sim_threshold',
+            0.74,
+        )
+        self.SEMANTIC_MIN_CHUNK_SIZE = self._get_int(
+            'EDURAG_SEMANTIC_MIN_CHUNK_SIZE',
+            'retrieval',
+            'semantic_min_chunk_size',
+            220,
+        )
+        self.SEMANTIC_MAX_CHUNK_SIZE = self._get_int(
+            'EDURAG_SEMANTIC_MAX_CHUNK_SIZE',
+            'retrieval',
+            'semantic_max_chunk_size',
+            520,
+        )
+        self.SEMANTIC_MODEL_PATH = self._get_str(
+            'EDURAG_SEMANTIC_MODEL_PATH',
+            'retrieval',
+            'semantic_model_path',
+            os.path.join(project_root, 'models', 'bge-m3'),
+        )
+        self.GRAPH_PARENT_CHUNK_SIZE = self._get_int(
+            'EDURAG_GRAPH_PARENT_CHUNK_SIZE',
+            'graphrag',
+            'graph_parent_chunk_size',
+            1600,
+        )
+        self.GRAPH_CHILD_CHUNK_SIZE = self._get_int(
+            'EDURAG_GRAPH_CHILD_CHUNK_SIZE',
+            'graphrag',
+            'graph_child_chunk_size',
+            500,
+        )
+        self.GRAPH_CHUNK_OVERLAP = self._get_int(
+            'EDURAG_GRAPH_CHUNK_OVERLAP',
+            'graphrag',
+            'graph_chunk_overlap',
+            100,
+        )
+
+        self.OCR_ENABLE = self._get_bool('EDURAG_OCR_ENABLE', 'ocr', 'enable', True)
+        self.PDF_IMAGE_OCR_ENABLE = self._get_bool(
+            'EDURAG_PDF_IMAGE_OCR_ENABLE',
+            'ocr',
+            'pdf_image_ocr_enable',
+            True,
+        )
+        self.PDF_OCR_MIN_IMAGE_WIDTH_RATIO = self._get_float(
+            'EDURAG_PDF_OCR_MIN_IMAGE_WIDTH_RATIO',
+            'ocr',
+            'pdf_ocr_min_image_width_ratio',
+            0.3,
+        )
+        self.PDF_OCR_MIN_IMAGE_HEIGHT_RATIO = self._get_float(
+            'EDURAG_PDF_OCR_MIN_IMAGE_HEIGHT_RATIO',
+            'ocr',
+            'pdf_ocr_min_image_height_ratio',
+            0.3,
+        )
+        self.DOC_IMAGE_OCR_ENABLE = self._get_bool(
+            'EDURAG_DOC_IMAGE_OCR_ENABLE',
+            'ocr',
+            'doc_image_ocr_enable',
+            True,
+        )
+        self.PPT_IMAGE_OCR_ENABLE = self._get_bool(
+            'EDURAG_PPT_IMAGE_OCR_ENABLE',
+            'ocr',
+            'ppt_image_ocr_enable',
+            True,
+        )
+        self.DEDOC_FALLBACK_ENABLE = self._get_bool(
+            'EDURAG_DEDOC_FALLBACK_ENABLE',
+            'loader_fallback',
+            'dedoc_fallback_enable',
+            True,
+        )
         self.RETRIEVAL_K = self._get_int('EDURAG_RETRIEVAL_K', 'retrieval', 'retrieval_k', 5)
         self.CANDIDATE_M = self._get_int('EDURAG_CANDIDATE_M', 'retrieval', 'candidate_m', 2)
 
@@ -107,6 +200,53 @@ class Config:
             return self.config.getboolean(section, option, fallback=fallback)
         except Exception:
             return fallback
+
+    def _get_float(self, env_name, section, option, fallback):
+        value = os.getenv(env_name)
+        if value is not None and value != '':
+            try:
+                return float(value)
+            except ValueError:
+                return fallback
+        try:
+            if not self.config.has_section(section):
+                return fallback
+            return self.config.getfloat(section, option, fallback=fallback)
+        except Exception:
+            return fallback
+
+    def _get_mapping(self, env_name, section, option, fallback):
+        value = os.getenv(env_name)
+        raw = value
+        if raw is None or raw == '':
+            try:
+                if not self.config.has_section(section):
+                    return fallback
+                raw = self.config.get(section, option, fallback='')
+            except Exception:
+                return fallback
+
+        if not raw:
+            return fallback
+
+        mapping = {}
+        try:
+            parsed = ast.literal_eval(raw)
+            if isinstance(parsed, dict):
+                return {str(key).strip().lower(): str(val).strip().lower() for key, val in parsed.items()}
+        except (ValueError, SyntaxError):
+            pass
+
+        for item in str(raw).split(','):
+            if ':' not in item:
+                continue
+            key, val = item.split(':', 1)
+            key = key.strip().lower()
+            val = val.strip().lower()
+            if key and val:
+                mapping[key] = val
+
+        return mapping or fallback
 
     def _get_list(self, env_name, section, option, fallback):
         value = os.getenv(env_name)

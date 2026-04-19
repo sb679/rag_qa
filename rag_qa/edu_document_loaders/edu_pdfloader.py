@@ -13,9 +13,11 @@ from base import Config, logger
 conf = Config()
 
 # PDF OCR 控制：只对宽高超过页面一定比例（图片宽/页面宽，图片高/页面高）的图片进行 OCR。
-# 这样可以避免 PDF 中一些小图片的干扰，提高非扫描版 PDF 处理速度
-# 降低阈值以识别更多图片内容（从 0.6 降至 0.3）
-PDF_OCR_THRESHOLD = (0.3, 0.3)
+# 这样可以避免 PDF 中一些小图片的干扰，提高非扫描版 PDF 处理速度。
+PDF_OCR_THRESHOLD = (
+    conf.PDF_OCR_MIN_IMAGE_WIDTH_RATIO,
+    conf.PDF_OCR_MIN_IMAGE_HEIGHT_RATIO,
+)
 
 
 class OCRPDFLoader(BaseLoader):
@@ -34,9 +36,12 @@ class OCRPDFLoader(BaseLoader):
         self.save_interval = save_interval  # 增量保存间隔
         # 缓存文件路径（与原文件同目录）
         self.cache_file_path = file_path + '.ocr_cache.json'
-        # 初始化 OCR 引擎（只初始化一次，重复使用）
-        from edu_document_loaders.edu_ocr import get_ocr
-        self.ocr_engine = get_ocr()
+        # OCR 可按配置关闭（例如数字化 PDF 场景）。
+        self.enable_image_ocr = bool(conf.OCR_ENABLE and conf.PDF_IMAGE_OCR_ENABLE)
+        self.ocr_engine = None
+        if self.enable_image_ocr:
+            from edu_document_loaders.edu_ocr import get_ocr
+            self.ocr_engine = get_ocr()
 
     def lazy_load(self) -> Iterator[Document]:
         # <-- Does not take any arguments
@@ -81,33 +86,34 @@ class OCRPDFLoader(BaseLoader):
             # 提取文本：默认使用 "text" 模式提取文本。
             text = page.get_text("text")
             resp += text + "\n"
-            # 获取图片：获得所有显示的图像的元信息列表。
-            img_list = page.get_image_info(xrefs=True)
-            for img in img_list:
-                # xref 一种编号，指向该图像对象在 PDF 文件中的位置
-                if xref := img.get("xref"):
-                    # 图像在页面上的位置和尺寸。
-                    bbox = img["bbox"]
-                    # 检查图片尺寸是否超过设定的阈值
-                    if ((bbox[2] - bbox[0]) / (page.rect.width) < PDF_OCR_THRESHOLD[0]
-                            or (bbox[3] - bbox[1]) / (page.rect.height) < PDF_OCR_THRESHOLD[1]):
-                        continue
-                    pix = fitz.Pixmap(doc, xref)
-                    if int(page.rotation) != 0:  # 如果 Page 有旋转角度，则旋转图片
-                        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
-                        tmp_img = Image.fromarray(img_array)
-                        ori_img = cv2.cvtColor(np.array(tmp_img), cv2.COLOR_RGB2BGR)
-                        rot_img = self.rotate_img(img=ori_img, angle=360 - page.rotation)
-                        img_array = cv2.cvtColor(rot_img, cv2.COLOR_RGB2BGR)
-                    else:
-                        img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
-        
-                    # 使用 RapidOCR 本地识别（复用已初始化的引擎）
-                    ocr_result, _ = self.ocr_engine(img_array)
-                    if ocr_result:
-                        ocr_text = "\n".join([line[1] for line in ocr_result])
-                        if ocr_text:
-                            resp += ocr_text + "\n"
+            if self.enable_image_ocr and self.ocr_engine is not None:
+                # 获取图片：获得所有显示的图像的元信息列表。
+                img_list = page.get_image_info(xrefs=True)
+                for img in img_list:
+                    # xref 一种编号，指向该图像对象在 PDF 文件中的位置
+                    if xref := img.get("xref"):
+                        # 图像在页面上的位置和尺寸。
+                        bbox = img["bbox"]
+                        # 检查图片尺寸是否超过设定的阈值
+                        if ((bbox[2] - bbox[0]) / (page.rect.width) < PDF_OCR_THRESHOLD[0]
+                                or (bbox[3] - bbox[1]) / (page.rect.height) < PDF_OCR_THRESHOLD[1]):
+                            continue
+                        pix = fitz.Pixmap(doc, xref)
+                        if int(page.rotation) != 0:  # 如果 Page 有旋转角度，则旋转图片
+                            img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
+                            tmp_img = Image.fromarray(img_array)
+                            ori_img = cv2.cvtColor(np.array(tmp_img), cv2.COLOR_RGB2BGR)
+                            rot_img = self.rotate_img(img=ori_img, angle=360 - page.rotation)
+                            img_array = cv2.cvtColor(rot_img, cv2.COLOR_RGB2BGR)
+                        else:
+                            img_array = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, -1)
+
+                        # 使用 RapidOCR 本地识别（复用已初始化的引擎）
+                        ocr_result, _ = self.ocr_engine(img_array)
+                        if ocr_result:
+                            ocr_text = "\n".join([line[1] for line in ocr_result])
+                            if ocr_text:
+                                resp += ocr_text + "\n"
             
             # 增量保存缓存：每 save_interval 页保存一次
             if self.use_cache and (i + 1) % self.save_interval == 0:

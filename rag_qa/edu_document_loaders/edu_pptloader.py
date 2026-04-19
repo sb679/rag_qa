@@ -7,6 +7,9 @@ from PIL import Image
 import numpy as np
 from io import BytesIO
 from tqdm import tqdm
+from base import Config
+
+conf = Config()
 
 
 class OCRPPTLoader(BaseLoader):
@@ -35,8 +38,9 @@ class OCRPPTLoader(BaseLoader):
         # 打开指定路径的 PowerPoint 文件
         prs = Presentation(filepath)
         print(f'prs-->{prs}')
-        # 获取 OCR 功能的实例
-        ocr = get_ocr()
+        # 根据配置决定是否对 PPT 内嵌图片执行 OCR。
+        enable_image_ocr = bool(conf.OCR_ENABLE and conf.PPT_IMAGE_OCR_ENABLE)
+        ocr = get_ocr() if enable_image_ocr else None
         # 初始化一个空字符串，用于存储提取的文本内容
         resp = ""
 
@@ -63,15 +67,12 @@ class OCRPPTLoader(BaseLoader):
 
             # 检查形状是否为图片（shape_type == 13）
             if shape.shape_type == 13:  # 13 表示图片
-                # 使用 BytesIO 打开图片数据并转换为图像对象
-                image = Image.open(BytesIO(shape.image.blob))
-                # 使用 OCR 处理图像并获取结果
-                result, _ = ocr(np.array(image))
-                if result:  # 如果 OCR 有结果
-                    # 提取 OCR 结果中的文本行
-                    ocr_result = [line[1] for line in result]
-                    # 将 OCR 提取的文本添加到resp中，以换行分隔
-                    resp += "\n".join(ocr_result)
+                if enable_image_ocr and ocr is not None:
+                    image = Image.open(BytesIO(shape.image.blob))
+                    result, _ = ocr(np.array(image))
+                    if result:  # 如果 OCR 有结果
+                        ocr_result = [line[1] for line in result]
+                        resp += "\n".join(ocr_result)
 
             # 检查形状是否为组合形状（shape_type == 6）
             elif shape.shape_type == 6:  # 6 表示组合
