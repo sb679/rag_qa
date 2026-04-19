@@ -17,10 +17,11 @@ for p in (_rag_qa_path, _core_path, _backend_dir):
         sys.path.insert(0, p)
 
 from core.auth_manager import get_auth_manager
-from base import logger
+from base import logger, Config
 
 router = APIRouter()
 auth_manager = get_auth_manager()
+_config = Config()
 
 class LoginRequest(BaseModel):
     username: str
@@ -42,9 +43,7 @@ def login(request: LoginRequest):
     """
     用户登录
     
-    演示账号：
-    - supervisor / supervisor123 (主管)
-    - user / user123 (普通用户)
+    演示账号密码由环境变量控制，避免硬编码在代码中。
     """
     user = auth_manager.authenticate(request.username, request.password)
     if not user:
@@ -107,13 +106,13 @@ def get_demo_credentials():
         accounts=[
             {
                 "username": "supervisor",
-                "password": "supervisor123",
+                "password": _config.DEFAULT_SUPERVISOR_PASSWORD,
                 "role": "主管",
                 "description": "可以查看所有反馈、会话、管理知识库版本"
             },
             {
                 "username": "user",
-                "password": "user123",
+                "password": "demo-user-pass-change-me",
                 "role": "普通用户",
                 "description": "可以提问、提交反馈"
             }

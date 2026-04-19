@@ -58,9 +58,8 @@
       <div class="login-footer">
         <p class="demo-hint">演示账号：</p>
         <div class="demo-accounts">
-          <span>主管：9526/9526</span>
-          <span>主管：9527/9527</span>
-          <span>主管：9528/9528</span>
+          <span>主管账号：9526 / 9527 / 9528</span>
+          <span>默认演示密码：由 EDURAG_DEFAULT_SUPERVISOR_PASSWORD 配置</span>
         </div>
       </div>
     </div>

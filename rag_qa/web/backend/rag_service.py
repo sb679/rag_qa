@@ -65,7 +65,7 @@ _vector_store = VectorStore(
 
 _rag_system = RAGSystem(_vector_store, _call_llm, _conv_manager)
 
-print("[OK] RAG 系统已就绪")
+logger.info("RAG service ready")
 
 # ── 数据结构 ──────────────────────────────────────────────────────────────────
 @dataclass
