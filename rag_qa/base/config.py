@@ -143,6 +143,19 @@ class Config:
         self.CUSTOMER_SERVICE_PHONE = self._get_str('EDURAG_CUSTOMER_SERVICE_PHONE', 'app', 'customer_service_phone', '400-000-0000')
         self.VALID_SOURCES = self._get_list('EDURAG_VALID_SOURCES', 'app', 'valid_sources', ['mining'])
         self.LOG_FILE = self._get_str('EDURAG_LOG_FILE', 'logger', 'log_file', 'logs/app.log')
+        self.LOG_STRUCTURED = self._get_bool('EDURAG_LOG_STRUCTURED', 'logger', 'structured', True)
+        self.LOG_ALERT_ERROR_THRESHOLD = self._get_int(
+            'EDURAG_LOG_ALERT_ERROR_THRESHOLD',
+            'logger',
+            'alert_error_threshold',
+            20,
+        )
+        self.LOG_ALERT_WINDOW_SEC = self._get_int(
+            'EDURAG_LOG_ALERT_WINDOW_SEC',
+            'logger',
+            'alert_window_sec',
+            300,
+        )
 
         self.JWT_SECRET = self._get_str('EDURAG_JWT_SECRET', 'auth', 'jwt_secret', 'demo-jwt-secret-change-me')
         self.DEFAULT_SUPERVISOR_PASSWORD = self._get_str(

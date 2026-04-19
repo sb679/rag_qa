@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: EduRAG Dashboards
+    orgId: 1
+    folder: EduRAG
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards

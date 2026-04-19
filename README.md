@@ -129,6 +129,20 @@ cp .env.example .env
 
 在 `.env` 中填写真实密钥。服务启动时会优先读取 `EDURAG_*` 环境变量。
 
+开发部署安全建议（已支持）：
+- `docker-compose.yml` 不再写死 `1234/minioadmin` 这类明文默认凭据。
+- 通过 `.env` 注入如下变量：
+	- `EDURAG_MYSQL_ROOT_PASSWORD`
+	- `EDURAG_MINIO_ROOT_USER`
+	- `EDURAG_MINIO_ROOT_PASSWORD`
+- 示例值见项目根目录 `.env.example`。
+
+可观测性（轻量）建议：
+- 默认启用结构化 JSON 日志（`EDURAG_LOG_STRUCTURED=true`）。
+- 支持错误阈值告警：在时间窗内达到阈值时输出 `error_alert_triggered` 事件。
+	- `EDURAG_LOG_ALERT_ERROR_THRESHOLD`（默认 20）
+	- `EDURAG_LOG_ALERT_WINDOW_SEC`（默认 300）
+
 Windows 工程化密钥初始化（推荐）：
 
 ```powershell
@@ -259,6 +273,44 @@ python rag_main.py
 - 文档文件默认通过 MinIO 存储到本地对象存储，不再直接散落在代码目录中。
 - MySQL 数据通过 Docker volume 持久化在本机。
 - 如果更换电脑，需要迁移 Docker volume、重新配置环境变量，或者重新上传文档并重建索引。
+
+## 🔒 生产 Secrets 与 Compose 覆盖
+
+开发环境的 `docker-compose.yml` 已改为从环境变量读取关键凭据，不再硬编码默认密码。
+
+生产建议使用覆盖文件：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+`docker-compose.prod.yml` 会要求必须提供：
+
+- `EDURAG_MYSQL_ROOT_PASSWORD`
+- `EDURAG_MINIO_ROOT_USER`
+- `EDURAG_MINIO_ROOT_PASSWORD`
+
+并关闭 MySQL/MinIO 对宿主机端口暴露，降低暴露面。
+
+## 📈 Prometheus + Grafana 监控
+
+后端新增 `/metrics` 指标接口，包含：
+
+- `edurag_http_requests_total`
+- `edurag_http_request_duration_ms`
+
+启动监控栈：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d prometheus grafana
+```
+
+访问地址：
+
+- Prometheus: `http://127.0.0.1:19090`
+- Grafana: `http://127.0.0.1:13000`
+
+Grafana 默认会自动加载 `ops/grafana/dashboards/edurag-overview.json`。
 
 ## 🧰 VS Code 推荐任务
 

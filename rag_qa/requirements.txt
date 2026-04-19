@@ -142,6 +142,7 @@ pydantic_core==2.33.1
 pydub==0.25.1
 pyemd==1.0.0
 Pygments==2.19.1
+prometheus-client==0.22.1
 pymilvus==2.5.4
 PyMuPDF==1.25.5
 PyMySQL==1.1.1

@@ -88,6 +88,9 @@ dedoc_fallback_enable = true
 ```ini
 [logger]
 log_file = logs/app.log   # 日志文件路径
+structured = true
+alert_error_threshold = 20
+alert_window_sec = 300
 ```
 
 ### 应用配置
