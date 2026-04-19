@@ -6,12 +6,13 @@ import json
 import os
 from datetime import datetime
 from typing import Optional, Dict, List
-from base import logger
+from base import logger, Config
 
 class UserManager:
     """用户管理器"""
     
     def __init__(self):
+        self._config = Config()
         self.data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "user_data")
         os.makedirs(self.data_dir, exist_ok=True)
         self.users_file = os.path.join(self.data_dir, "users.json")
@@ -30,7 +31,7 @@ class UserManager:
         default_users = {
             "9526": {
                 "employee_id": "9526",
-                "password": "9526",
+                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
                 "role": "supervisor",
                 "nickname": "主管A",
                 "avatar": "",
@@ -39,7 +40,7 @@ class UserManager:
             },
             "9527": {
                 "employee_id": "9527",
-                "password": "9527",
+                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
                 "role": "supervisor",
                 "nickname": "主管B",
                 "avatar": "",
@@ -48,7 +49,7 @@ class UserManager:
             },
             "9528": {
                 "employee_id": "9528",
-                "password": "9528",
+                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
                 "role": "supervisor",
                 "nickname": "主管C",
                 "avatar": "",

@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import rag_service
 from core.auth_manager import get_auth_manager
+from base import logger
 
 router = APIRouter()
 auth_manager = get_auth_manager()
@@ -51,7 +52,7 @@ def _load_bart():
         _bart_model.eval()
         return True
     except Exception as e:
-        print(f"BART 模型加载失败: {e}")
+        logger.error(f"BART 模型加载失败: {e}")
         return False
 
 
@@ -78,7 +79,7 @@ def _generate_question(context: str) -> Optional[str]:
         question = _bart_tokenizer.decode(outputs[0], skip_special_tokens=True)
         return question if question else None
     except Exception as e:
-        print(f"问题生成失败: {e}")
+        logger.warning(f"问题生成失败: {e}")
         return None
 
 

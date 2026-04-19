@@ -8,7 +8,7 @@ from enum import Enum
 from typing import Optional, Dict, Any
 import json
 import os
-from base import logger
+from base import logger, Config
 
 class UserRole(Enum):
     """用户角色枚举"""
@@ -19,8 +19,10 @@ class UserRole(Enum):
 class AuthManager:
     """认证管理器"""
     
-    def __init__(self, secret_key: str = "rag_qa_secret_key_2024"):
-        self.secret_key = secret_key
+    def __init__(self, secret_key: Optional[str] = None):
+        cfg = Config()
+        self.secret_key = secret_key or cfg.JWT_SECRET
+        self.default_supervisor_password = cfg.DEFAULT_SUPERVISOR_PASSWORD
         self.users = self._init_users()
         self.audit_log_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "audit_logs")
         os.makedirs(self.audit_log_dir, exist_ok=True)
@@ -31,7 +33,7 @@ class AuthManager:
             "supervisor": {
                 "user_id": "supervisor_001",
                 "username": "supervisor",
-                "password": "supervisor123",  # 演示用，实际应该加密
+                "password": self.default_supervisor_password,
                 "role": UserRole.SUPERVISOR.value,
                 "email": "supervisor@rag-qa.com",
                 "created_at": datetime.now().isoformat(),
@@ -39,7 +41,7 @@ class AuthManager:
             "user": {
                 "user_id": "user_001",
                 "username": "user",
-                "password": "user123",  # 演示用，实际应该加密
+                "password": "demo-user-pass-change-me",
                 "role": UserRole.USER.value,
                 "email": "user@rag-qa.com",
                 "created_at": datetime.now().isoformat(),

@@ -1,11 +1,10 @@
 # base/logger.py
 # -*- coding:utf-8 -*-
-# 导入日志库
 import logging
-# 导入路径操作库
 import os
-# 导入配置类
-from config import Config
+import re
+
+from .config import Config
 # 获取当前文件的绝对路径
 current_file_path = os.path.abspath(__file__)
 # print(f'current_file_path--》{current_file_path}')
@@ -16,6 +15,31 @@ current_dir_path = os.path.dirname(current_file_path)
 project_root = os.path.dirname(current_dir_path)
 
 log_file_path = os.path.join(project_root, Config().LOG_FILE)
+
+
+class SensitiveDataFilter(logging.Filter):
+    """Mask common sensitive values before emitting logs."""
+
+    def __init__(self):
+        super().__init__()
+        self._patterns = [
+            (re.compile(r'(api[_-]?key\s*[=:]\s*)([^\s,;]+)', re.IGNORECASE), r'\1***'),
+            (re.compile(r'(password\s*[=:]\s*)([^\s,;]+)', re.IGNORECASE), r'\1***'),
+            (re.compile(r'(token\s*[=:]\s*)([^\s,;]+)', re.IGNORECASE), r'\1***'),
+            (re.compile(r'(Bearer\s+)([A-Za-z0-9\-._~+/]+=*)', re.IGNORECASE), r'\1***'),
+            (re.compile(r'(sk-[A-Za-z0-9\-_]{8,})'), '***'),
+        ]
+
+    def filter(self, record):
+        message = record.getMessage()
+        masked = message
+        for pattern, replacement in self._patterns:
+            masked = pattern.sub(replacement, masked)
+
+        if masked != message:
+            record.msg = masked
+            record.args = ()
+        return True
 
 
 def setup_logging(log_file=log_file_path):
@@ -46,6 +70,7 @@ def setup_logging(log_file=log_file_path):
         logger.addHandler(file_handler)
         # 添加控制台处理器
         logger.addHandler(console_handler)
+        logger.addFilter(SensitiveDataFilter())
     # 返回日志器
     return logger
 

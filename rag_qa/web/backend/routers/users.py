@@ -73,9 +73,8 @@ def verify_token_header(authorization: Optional[str] = Header(None)) -> dict:
 def login(request: LoginRequest):
     """
     用户登录（工号 + 密码）
-    
-    默认账号：
-    - 主管：9526/9526, 9527/9527, 9528/9528
+
+    默认演示密码通过 EDURAG_DEFAULT_SUPERVISOR_PASSWORD 环境变量配置。
     """
     user = user_manager.authenticate(request.employee_id, request.password)
     if not user:

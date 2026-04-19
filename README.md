@@ -103,8 +103,16 @@ source .venv/bin/activate  # Linux/Mac
 .venv\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -r requirments.txt
+pip install -r requirements.txt
 ```
+
+### 环境变量（推荐）
+
+```bash
+cp .env.example .env
+```
+
+在 `.env` 中填写真实密钥，服务启动时会优先读取 `EDURAG_*` 环境变量。
 
 ### 配置
 
@@ -173,9 +181,9 @@ python rag_main.py
 | 普通用户 | 提问、反馈、查看版本 | 日常使用 |
 | 主管 | 所有权限 + 版本管理、反馈统计、审计日志 | 系统管理 |
 
-**默认账号：**
-- 普通用户：`user` / `password123`
-- 主管：`admin` / `admin123`
+**演示账号：**
+- 主管工号：`9526` / `9527` / `9528`
+- 默认演示密码：由 `EDURAG_DEFAULT_SUPERVISOR_PASSWORD` 控制（默认仅演示用）
 
 ## 📊 工业化功能说明
 

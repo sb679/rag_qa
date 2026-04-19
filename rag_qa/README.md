@@ -102,8 +102,19 @@ source .venv/bin/activate  # Linux/Mac
 .venv\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -r requirments.txt
+pip install -r requirements.txt
 ```
+
+### 环境变量（强烈推荐）
+
+```bash
+# 在项目根目录执行
+cp ../.env.example ../.env
+# 或在 rag_qa 目录下
+cp .env.example .env
+```
+
+填入真实密钥后，再启动服务。代码会优先读取 `EDURAG_*` 环境变量。
 
 ### 环境约定（推荐）
 
@@ -209,9 +220,9 @@ python rag_main.py
 | 普通用户 | 提问、反馈、查看版本 | 日常使用 |
 | 主管 | 所有权限 + 版本管理、反馈统计、审计日志 | 系统管理 |
 
-**默认账号：**
-- 普通用户：`user` / `password123`
-- 主管：`admin` / `admin123`
+**演示账号：**
+- 主管工号：`9526` / `9527` / `9528`
+- 默认演示密码：通过 `EDURAG_DEFAULT_SUPERVISOR_PASSWORD` 配置（默认仅为演示值，务必自行修改）
 
 ## 📊 工业化功能说明
 
@@ -257,11 +268,12 @@ python rag_main.py
 
 ### 别人拉取项目后的恢复流程
 1. 拉取代码仓库
-2. 复制 `config.ini.template` 为 `config.ini`
-3. 安装依赖：`pip install -r requirments.txt`
-4. 运行模型下载脚本：`python download_models.py`
-5. 如果需要构建数据集或文档，再执行对应生成脚本
-6. 启动后端和前端，或直接双击 `start_edurag.bat`
+2. 复制 `.env.example` 为 `.env` 并填写真实密钥
+3. 复制 `config.ini.template` 为 `config.ini`
+4. 安装依赖：`pip install -r requirements.txt`
+5. 运行模型下载脚本：`python download_models.py`
+6. 如果需要构建数据集或文档，再执行对应生成脚本
+7. 启动后端和前端，或直接双击 `start_edurag.bat`
 
 ### 如果需要完整离线包
 完整模型和示例数据可以单独放在网盘或离线包里，再按目录结构解压回项目根目录。

@@ -35,12 +35,19 @@ collection_name = edurag_final # 集合名称
 ```ini
 [llm]
 model = qwen-plus                        # 模型名称
-dashscope_api_key = YOUR_API_KEY         # DashScope API Key（请从阿里云获取）
-dashscope_base_url = https://api.yunwu.ai/v1  # API 基础 URL
+dashscope_api_key = demo-key-change-me   # DashScope API Key（推荐通过环境变量 EDURAG_DASHSCOPE_API_KEY 注入）
+dashscope_base_url = https://dashscope.aliyuncs.com/compatible-mode/v1
 
 # DeepSeek API 配置
-deepseek_api_key = YOUR_API_KEY          # DeepSeek API Key（请从 DeepSeek 官网获取）
+deepseek_api_key = demo-key-change-me    # DeepSeek API Key（推荐通过环境变量 EDURAG_DEEPSEEK_API_KEY 注入）
 deepseek_base_url = https://api.deepseek.com/v1  # DeepSeek API 基础 URL
+```
+
+### 认证配置
+```ini
+[auth]
+jwt_secret = demo-jwt-secret-change-me
+default_supervisor_password = demo-supervisor-pass-change-me
 ```
 
 ### 检索参数配置
@@ -86,3 +93,4 @@ valid_sources = ["mining"]                   # 有效的数据源列表
 - 请勿将包含真实 API Key 和密码的 `config.ini` 文件上传到公开代码仓库
 - 建议使用环境变量或密钥管理服务来存储敏感信息
 - 项目已配置 `.gitignore` 自动忽略 `config.ini` 文件
+- 推荐从 `.env.example` 复制为 `.env`，再通过环境变量覆盖敏感配置

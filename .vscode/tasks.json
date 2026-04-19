@@ -21,6 +21,13 @@
       "dependsOrder": "sequence",
       "isBackground": true,
       "problemMatcher": []
+    },
+    {
+      "label": "Repo: Self-check",
+      "type": "shell",
+      "command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\scripts\\repo_self_check.ps1\"",
+      "group": "build",
+      "problemMatcher": []
     }
   ]
 }

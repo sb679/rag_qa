@@ -74,5 +74,7 @@ rag_qa/rag_assesment/generated_datasets/
 # Sensitive configuration
 .env
 .env.*
+!.env.example
+!rag_qa/.env.example
 config.ini
 rag_qa/config.ini
