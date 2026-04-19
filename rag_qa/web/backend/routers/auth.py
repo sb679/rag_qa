@@ -4,7 +4,7 @@
 """
 import sys
 import os
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Optional
 
@@ -38,6 +38,12 @@ class CredentialsResponse(BaseModel):
     """演示用：返回可用的账号密码"""
     accounts: list
 
+
+def _resolve_token(token: Optional[str], authorization: Optional[str]) -> Optional[str]:
+    if authorization and authorization.startswith("Bearer "):
+        return authorization.replace("Bearer ", "", 1).strip()
+    return token
+
 @router.post("/login", response_model=LoginResponse)
 def login(request: LoginRequest):
     """
@@ -70,8 +76,11 @@ def login(request: LoginRequest):
     )
 
 @router.post("/logout")
-def logout(token: str):
+def logout(token: Optional[str] = None, authorization: Optional[str] = Header(None)):
     """用户登出"""
+    token = _resolve_token(token, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Token 无效")
     payload = auth_manager.verify_token(token)
     if payload:
         auth_manager.log_action(
@@ -85,8 +94,11 @@ def logout(token: str):
     raise HTTPException(status_code=401, detail="Token 无效")
 
 @router.get("/verify")
-def verify_token(token: str):
+def verify_token(token: Optional[str] = None, authorization: Optional[str] = Header(None)):
     """验证 token"""
+    token = _resolve_token(token, authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Token 无效或已过期")
     payload = auth_manager.verify_token(token)
     if not payload:
         raise HTTPException(status_code=401, detail="Token 无效或已过期")
@@ -106,7 +118,7 @@ def get_demo_credentials():
         accounts=[
             {
                 "username": "supervisor",
-                "password": _config.DEFAULT_SUPERVISOR_PASSWORD,
+                "password": "<由 EDURAG_DEFAULT_SUPERVISOR_PASSWORD 提供>",
                 "role": "主管",
                 "description": "可以查看所有反馈、会话、管理知识库版本"
             },

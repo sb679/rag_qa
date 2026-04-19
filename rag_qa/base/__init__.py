@@ -11,5 +11,5 @@ if module_dir not in sys.path:
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 # print(sys.path)
-from config import Config
-from logger import logger
+from .config import Config
+from .logger import logger

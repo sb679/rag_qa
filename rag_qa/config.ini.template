@@ -8,6 +8,7 @@
 ```ini
 [mysql]
 host = localhost          # MySQL 主机地址
+port = 3306               # MySQL 端口
 user = root               # MySQL 用户名
 password = YOUR_PASSWORD  # MySQL 密码（请填写您的实际密码）
 database = subjects_kg    # 数据库名称
@@ -71,6 +72,20 @@ log_file = logs/app.log   # 日志文件路径
 [app]
 customer_service_phone = YOUR_PHONE_NUMBER  # 客服电话
 valid_sources = ["mining"]                   # 有效的数据源列表
+
+[storage]
+# 存储后端：local 或 minio
+backend = local
+
+# local 模式下原始文件落盘目录
+local_root = user_data/knowledge_files
+
+# minio 模式配置（backend=minio 时生效）
+minio_endpoint = 127.0.0.1:9000
+minio_access_key = minioadmin
+minio_secret_key = minioadmin
+minio_bucket = edurag-knowledge
+minio_secure = false
 ```
 
 ## 获取 API Key

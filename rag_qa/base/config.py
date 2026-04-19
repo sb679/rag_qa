@@ -15,6 +15,7 @@ class Config:
         self.config.read(config_file, encoding='utf-8')
 
         self.MYSQL_HOST = self._get_str('EDURAG_MYSQL_HOST', 'mysql', 'host', 'localhost')
+        self.MYSQL_PORT = self._get_int('EDURAG_MYSQL_PORT', 'mysql', 'port', 3306)
         self.MYSQL_USER = self._get_str('EDURAG_MYSQL_USER', 'mysql', 'user', 'root')
         self.MYSQL_PASSWORD = self._get_str('EDURAG_MYSQL_PASSWORD', 'mysql', 'password', 'demo-mysql-password')
         self.MYSQL_DATABASE = self._get_str('EDURAG_MYSQL_DATABASE', 'mysql', 'database', 'subjects_kg')
@@ -58,11 +59,29 @@ class Config:
             'demo-supervisor-pass-change-me',
         )
 
+        self.STORAGE_BACKEND = self._get_str('EDURAG_STORAGE_BACKEND', 'storage', 'backend', 'local').lower()
+        self.STORAGE_LOCAL_ROOT = self._get_str(
+            'EDURAG_STORAGE_LOCAL_ROOT',
+            'storage',
+            'local_root',
+            os.path.join(project_root, 'user_data', 'knowledge_files'),
+        )
+        self.MINIO_ENDPOINT = self._get_str('EDURAG_MINIO_ENDPOINT', 'storage', 'minio_endpoint', '127.0.0.1:9000')
+        self.MINIO_ACCESS_KEY = self._get_str('EDURAG_MINIO_ACCESS_KEY', 'storage', 'minio_access_key', 'minioadmin')
+        self.MINIO_SECRET_KEY = self._get_str('EDURAG_MINIO_SECRET_KEY', 'storage', 'minio_secret_key', 'minioadmin')
+        self.MINIO_BUCKET = self._get_str('EDURAG_MINIO_BUCKET', 'storage', 'minio_bucket', 'edurag-knowledge')
+        self.MINIO_SECURE = self._get_bool('EDURAG_MINIO_SECURE', 'storage', 'minio_secure', False)
+
     def _get_str(self, env_name, section, option, fallback):
         value = os.getenv(env_name)
         if value is not None and value != '':
             return value
-        return self.config.get(section, option, fallback=fallback)
+        try:
+            if not self.config.has_section(section):
+                return fallback
+            return self.config.get(section, option, fallback=fallback)
+        except Exception:
+            return fallback
 
     def _get_int(self, env_name, section, option, fallback):
         value = os.getenv(env_name)
@@ -71,14 +90,35 @@ class Config:
                 return int(value)
             except ValueError:
                 return fallback
-        return self.config.getint(section, option, fallback=fallback)
+        try:
+            if not self.config.has_section(section):
+                return fallback
+            return self.config.getint(section, option, fallback=fallback)
+        except Exception:
+            return fallback
+
+    def _get_bool(self, env_name, section, option, fallback):
+        value = os.getenv(env_name)
+        if value is not None and value != '':
+            return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
+        try:
+            if not self.config.has_section(section):
+                return fallback
+            return self.config.getboolean(section, option, fallback=fallback)
+        except Exception:
+            return fallback
 
     def _get_list(self, env_name, section, option, fallback):
         value = os.getenv(env_name)
         if value:
             return [item.strip() for item in value.split(',') if item.strip()]
 
-        raw = self.config.get(section, option, fallback='')
+        try:
+            if not self.config.has_section(section):
+                return fallback
+            raw = self.config.get(section, option, fallback='')
+        except Exception:
+            return fallback
         if not raw:
             return fallback
 
