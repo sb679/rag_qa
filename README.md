@@ -89,6 +89,22 @@ rag_qa/
 
 ## 🚀 快速开始
 
+### 工程版启动（推荐）
+
+这是当前最稳妥的启动方式：本地保留后端和前端，MySQL 和 MinIO 由 Docker Compose 管理。
+
+1. 确保已安装并启动 Docker Desktop。
+2. 在项目根目录双击 `start_edurag.bat`。
+3. 脚本会自动先启动 `mysql` 和 `minio`，然后再启动后端和前端。
+4. 启动完成后，浏览器会自动打开前端页面。
+
+默认端口约定：
+
+- 后端：`8000`
+- 前端：`5173`
+- MySQL：宿主机 `3307`，容器内 `3306`
+- MinIO：宿主机 `19000/19001`，容器内 `9000/9001`
+
 ### 环境要求
 - Python 3.8+
 - CUDA 11.0+ (可选，用于 GPU 加速)
@@ -97,9 +113,8 @@ rag_qa/
 
 ```bash
 # 创建虚拟环境
+cd rag_qa
 python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# 或
 .venv\Scripts\activate  # Windows
 
 # 安装依赖
@@ -112,7 +127,7 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-在 `.env` 中填写真实密钥，服务启动时会优先读取 `EDURAG_*` 环境变量。
+在 `.env` 中填写真实密钥。服务启动时会优先读取 `EDURAG_*` 环境变量。
 
 ### 配置
 
@@ -130,13 +145,13 @@ cp config.ini.template config.ini
 
 **后端 API 服务：**
 ```bash
-cd web/backend
+cd rag_qa/web/backend
 python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **前端开发服务：**
 ```bash
-cd web/frontend
+cd rag_qa/web/frontend
 npm install
 npm run dev
 ```
@@ -212,10 +227,9 @@ python rag_main.py
 
 ## 📦 完整项目下载
 
-由于项目包含大量模型文件和数据，完整项目已上传到网盘：
+由于项目包含大量模型文件和数据，Git 仓库只保留代码、配置和启动脚本；大模型和大数据建议按需下载或自行补齐。
 
-**网盘链接：** [通过网盘分享的文件：rag-qa
-链接: https://pan.baidu.com/s/1T7_l6S4sSv8TMCutPq1eXQ?pwd=7a7b 提取码: 7a7b]
+**网盘链接：** [通过网盘分享的文件：rag-qa](https://pan.baidu.com/s/1T7_l6S4sSv8TMCutPq1eXQ?pwd=7a7b)
 
 **包含内容：**
 - 完整源代码
@@ -227,6 +241,18 @@ python rag_main.py
 1. 解压项目
 2. 按上述"安装依赖"和"配置"步骤操作
 3. 运行后端和前端服务
+
+## 💾 数据存储说明
+
+- 文档文件默认通过 MinIO 存储到本地对象存储，不再直接散落在代码目录中。
+- MySQL 数据通过 Docker volume 持久化在本机。
+- 如果更换电脑，需要迁移 Docker volume、重新配置环境变量，或者重新上传文档并重建索引。
+
+## 🧰 VS Code 推荐任务
+
+- `Env: Self-check (.venv)`：检查虚拟环境与关键依赖
+- `Backend: Run Uvicorn (.venv)`：启动后端
+- `Repo: Self-check`：执行仓库级自检
 
 ## 🧪 测试
 
