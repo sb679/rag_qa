@@ -1,0 +1,26 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Env: Self-check (.venv)",
+      "type": "shell",
+      "command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\.vscode\\check_env.ps1\"",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Backend: Run Uvicorn (.venv)",
+      "type": "shell",
+      "command": "& \"${workspaceFolder}\\rag_qa\\.venv\\Scripts\\python.exe\" -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
+      "options": {
+        "cwd": "${workspaceFolder}\\rag_qa\\web\\backend"
+      },
+      "dependsOn": [
+        "Env: Self-check (.venv)"
+      ],
+      "dependsOrder": "sequence",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+# 配置说明
+
+本项目使用 `config.ini` 文件管理所有配置项。首次使用前，请复制此模板文件并重命名为 `config.ini`，然后填写您的实际配置信息。
+
+## 配置项说明
+
+### MySQL 数据库配置
+```ini
+[mysql]
+host = localhost          # MySQL 主机地址
+user = root               # MySQL 用户名
+password = YOUR_PASSWORD  # MySQL 密码（请填写您的实际密码）
+database = subjects_kg    # 数据库名称
+```
+
+### Redis 配置
+```ini
+[redis]
+host = localhost          # Redis 主机地址
+port = 6379               # Redis 端口
+password = YOUR_PASSWORD  # Redis 密码（请填写您的实际密码）
+db = 0                    # Redis 数据库编号
+```
+
+### Milvus 向量数据库配置
+```ini
+[milvus]
+host = localhost              # Milvus 主机地址
+port = 19530                  # Milvus 端口
+database_name = itcast        # 数据库名称
+collection_name = edurag_final # 集合名称
+```
+
+### LLM 大语言模型配置
+```ini
+[llm]
+model = qwen-plus                        # 模型名称
+dashscope_api_key = YOUR_API_KEY         # DashScope API Key（请从阿里云获取）
+dashscope_base_url = https://api.yunwu.ai/v1  # API 基础 URL
+
+# DeepSeek API 配置
+deepseek_api_key = YOUR_API_KEY          # DeepSeek API Key（请从 DeepSeek 官网获取）
+deepseek_base_url = https://api.deepseek.com/v1  # DeepSeek API 基础 URL
+```
+
+### 检索参数配置
+```ini
+[retrieval]
+parent_chunk_size = 1200  # 父文档块大小
+child_chunk_size = 300    # 子文档块大小
+chunk_overlap = 50        # 块重叠大小
+retrieval_k = 5           # 检索返回的候选数量
+candidate_m = 2           # 最终重排序后的候选数量
+```
+
+### 日志配置
+```ini
+[logger]
+log_file = logs/app.log   # 日志文件路径
+```
+
+### 应用配置
+```ini
+[app]
+customer_service_phone = YOUR_PHONE_NUMBER  # 客服电话
+valid_sources = ["mining"]                   # 有效的数据源列表
+```
+
+## 获取 API Key
+
+### DashScope (通义千问)
+1. 访问阿里云 DashScope 控制台
+2. 注册/登录账号
+3. 创建 API Key
+4. 将 API Key 填入 `dashscope_api_key`
+
+### DeepSeek
+1. 访问 DeepSeek 官网 (https://platform.deepseek.com/)
+2. 注册/登录账号
+3. 创建 API Key
+4. 将 API Key 填入 `deepseek_api_key`
+
+## 注意事项
+
+⚠️ **重要安全提示**：
+- 请勿将包含真实 API Key 和密码的 `config.ini` 文件上传到公开代码仓库
+- 建议使用环境变量或密钥管理服务来存储敏感信息
+- 项目已配置 `.gitignore` 自动忽略 `config.ini` 文件

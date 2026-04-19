@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  # 后端服务
+  backend:
+    build:
+      context: ./rag_qa
+      dockerfile: web/Dockerfile.backend
+    container_name: graduation-project-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+    networks:
+      - graduation-network
+    volumes:
+      - ./rag_qa:/app
+
+  # 前端服务
+  frontend:
+    build:
+      context: ./rag_qa/web/frontend
+      dockerfile: Dockerfile
+    container_name: graduation-project-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_PROXY_TARGET=http://backend:8000
+    networks:
+      - graduation-network
+
+networks:
+  graduation-network:
+    driver: bridge

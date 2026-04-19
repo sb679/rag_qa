@@ -1,0 +1,78 @@
+# Python bytecode and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+rag_qa/.venv/
+rag_qa/.venv_ragqa/
+venv/
+ENV/
+env/
+
+# IDE caches and local settings
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+node_modules/
+rag_qa/web/frontend/node_modules/
+
+# Logs and temporary files
+logs/
+rag_qa/logs/
+*.log
+build-log.txt
+tmp_trainer/
+*.tmp
+*.bak
+
+# Data, models, and generated content
+rag_qa/models/
+rag_qa/bert_query_classifier_new/
+rag_qa/bert_strategy_classifier/
+rag_qa/nlp_bert_document-segmentation_chinese-base/
+rag_qa/data/
+rag_qa/conversations/
+rag_qa/knowledge_versions/
+rag_qa/feedback_data/
+rag_qa/audit_logs/
+
+# Caches
+.pip_cache/
+rag_qa/.pip_cache/
+.claude/
+rag_qa/.claude/
+.pytest_cache/
+rag_qa/.pytest_cache/
+.coverage
+rag_qa/.coverage
+rag_qa/.git_nested_backup_rag_qa/
+rag_qa/user_data/
+rag_qa/rag_assesment/generated_datasets/
+
+# Sensitive configuration
+.env
+.env.*
+config.ini
+rag_qa/config.ini

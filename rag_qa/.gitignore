@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+.venv_ragqa/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Data and models (too large for GitHub)
+models/
+data/
+conversations/
+knowledge_versions/
+feedback_data/
+audit_logs/
+samples/
+
+# Cache
+.pip_cache/
+.claude/
+.pytest_cache/
+.coverage
+
+# Temporary files
+tmp_trainer/
+*.tmp
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with sensitive info
+config.ini

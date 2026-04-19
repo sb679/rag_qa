@@ -1,0 +1,75 @@
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv
+.venv_ragqa
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.github_release/
+
+# Large data and models (keep only what backend needs)
+data/
+datasets/
+models/
+bert_query_classifier_new/
+bert_strategy_classifier/
+nlp_bert_document-segmentation_chinese-base/
+rag_assesment/
+
+# Logs and temporary files
+logs/
+*.log
+tmp_trainer/
+audit_logs/
+conversations/
+test_conversations/
+feedback_data/
+knowledge_versions/
+samples/
+
+# Cache
+.pip_cache/
+.claude/
+*.cache
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (frontend)
+node_modules/
+dist/
+.next/
+
+# Documentation (optional, keep if needed)
+# *.md
+
+# Test and development
+test_*.py
+*_test.py
+examples/
+classify_data/
+experimental_data.*
