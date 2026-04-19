@@ -188,15 +188,24 @@ const displayBooks = computed(() => rawFiles.value.length || stats.value.total_b
 
 const progressColors = ['#409eff', '#67c23a', '#f0a020']
 
+function fmtSeconds(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n)) return '—'
+  return `${n.toFixed(3)}s`
+}
+
 const statusItems = computed(() => [
-  { name: 'Milvus 向量库',   ok: sys.value.milvus_connected, value: sys.value.milvus_connected ? '已连接' : '未连接（演示模式）' },
-  { name: 'LLM 模型',        ok: true,                        value: sys.value.llm_model || 'qwen-plus' },
-  { name: '查询判别模型',    ok: true,                        value: sys.value.query_classifier_model || 'bert_query_classifier_new' },
-  { name: '策略分类模型',    ok: true,                        value: sys.value.strategy_classifier_model || 'bert_strategy_classifier' },
-  { name: 'Embedding 模型',  ok: true,                        value: sys.value.embedding_model || 'BGE-M3' },
-  { name: 'Reranker 模型',   ok: true,                        value: sys.value.reranker_model || 'BGE-Reranker-Large' },
-  { name: '知识集合',        ok: true,                        value: sys.value.collection || 'edurag_final' },
-  { name: '切块参数',        ok: true,                        value: sys.value.chunk_size || '1200/300' },
+  { name: '服务就绪状态',    ok: !!sys.value.service_ready, value: sys.value.service_ready ? '就绪' : '降级运行' },
+  { name: 'Milvus 向量库',   ok: !!sys.value.dependency_checks?.milvus, value: sys.value.dependency_checks?.milvus ? '已连接' : '未连接' },
+  { name: 'LLM 客户端',      ok: !!sys.value.dependency_checks?.llm_client, value: sys.value.llm_model || 'qwen-plus' },
+  { name: '查询判别模型',    ok: !!sys.value.dependency_checks?.query_classifier, value: sys.value.query_classifier_model || 'bert_query_classifier_new' },
+  { name: '策略分类模型',    ok: !!sys.value.dependency_checks?.strategy_selector, value: sys.value.strategy_classifier_model || 'bert_strategy_classifier' },
+  { name: '向量存储实例',    ok: !!sys.value.dependency_checks?.vector_store, value: sys.value.collection || 'edurag_final' },
+  { name: '初始化耗时',      ok: !sys.value.init_error, value: fmtSeconds(sys.value.init_duration_sec) },
+  { name: 'LLM 熔断器',      ok: !sys.value.llm_circuit?.open, value: sys.value.llm_circuit?.open ? `开启(失败${sys.value.llm_circuit?.failure_count || 0})` : `关闭(失败${sys.value.llm_circuit?.failure_count || 0})` },
+  { name: '切块参数',        ok: true, value: sys.value.chunk_size || '1200/300' },
+  { name: '超时配置',        ok: true, value: sys.value.timeouts ? `分类${sys.value.timeouts.classify_sec}s/规划${sys.value.timeouts.plan_sec}s` : '—' },
+  { name: '初始化错误',      ok: !sys.value.init_error, value: sys.value.init_error || '无' },
 ])
 
 async function fetchOverview() {

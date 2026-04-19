@@ -159,6 +159,29 @@ if (-not (Test-Path $frontendDir)) {
     throw "Frontend directory not found: $frontendDir"
 }
 
+$dockerCmd = Get-Command docker -ErrorAction SilentlyContinue
+if ($null -eq $dockerCmd) {
+    throw 'docker command not found. Install Docker Desktop first.'
+}
+
+& $dockerCmd.Source info >$null 2>&1
+if ($LASTEXITCODE -ne 0) {
+    throw 'Docker engine is not running. Start Docker Desktop and retry.'
+}
+
+Write-Section 'Infrastructure startup'
+& $dockerCmd.Source compose -f (Join-Path $root 'docker-compose.yml') up -d mysql minio | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    throw 'Failed to start MySQL/MinIO via docker compose.'
+}
+
+Write-Host 'Waiting for MinIO on 127.0.0.1:19000 ...'
+Wait-ForPort -Port 19000 -TimeoutSeconds 60 -Name 'MinIO'
+Write-Host 'Waiting for MySQL on 127.0.0.1:3307 ...'
+Wait-ForPort -Port 3307 -TimeoutSeconds 60 -Name 'MySQL'
+Write-Host 'MySQL is ready on 127.0.0.1:3307'
+Write-Host 'MinIO is ready on http://127.0.0.1:19000 (console: http://127.0.0.1:19001)'
+
 $npmCmd = Get-Command npm -ErrorAction SilentlyContinue
 if ($null -eq $npmCmd) {
     throw 'npm command not found. Install Node.js first.'
@@ -182,6 +205,17 @@ if (-not (Test-Path $frontendNodeModules)) {
 Write-Section 'Starting backend'
 $env:PYTHONUTF8 = '1'
 $env:PYTHONIOENCODING = 'utf-8'
+$env:EDURAG_STORAGE_BACKEND = 'minio'
+$env:EDURAG_MINIO_ENDPOINT = '127.0.0.1:19000'
+$env:EDURAG_MINIO_ACCESS_KEY = 'minioadmin'
+$env:EDURAG_MINIO_SECRET_KEY = 'minioadmin'
+$env:EDURAG_MINIO_BUCKET = 'edurag-knowledge'
+$env:EDURAG_MINIO_SECURE = 'false'
+$env:EDURAG_MYSQL_HOST = '127.0.0.1'
+$env:EDURAG_MYSQL_PORT = '3307'
+$env:EDURAG_MYSQL_USER = 'root'
+$env:EDURAG_MYSQL_PASSWORD = '1234'
+$env:EDURAG_MYSQL_DATABASE = 'subjects_kg'
 $startedBackend = $false
 if (Test-PortOpen -Port $preferredBackendPort) {
     $health = Test-HttpUrl -Url "http://127.0.0.1:$preferredBackendPort/api/health"

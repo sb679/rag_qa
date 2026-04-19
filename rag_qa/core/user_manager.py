@@ -4,6 +4,9 @@
 """
 import json
 import os
+import base64
+import hashlib
+import hmac
 from datetime import datetime
 from typing import Optional, Dict, List
 from base import logger, Config
@@ -17,6 +20,47 @@ class UserManager:
         os.makedirs(self.data_dir, exist_ok=True)
         self.users_file = os.path.join(self.data_dir, "users.json")
         self.users = self._load_users()
+        self._ensure_password_hashes()
+
+    @staticmethod
+    def _hash_password(password: str, salt: Optional[bytes] = None, rounds: int = 200000) -> str:
+        if salt is None:
+            salt = os.urandom(16)
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+        salt_b64 = base64.b64encode(salt).decode("ascii")
+        digest_b64 = base64.b64encode(digest).decode("ascii")
+        return f"pbkdf2_sha256${rounds}${salt_b64}${digest_b64}"
+
+    @staticmethod
+    def _verify_password(password: str, stored_password: str) -> bool:
+        if not stored_password:
+            return False
+
+        if stored_password.startswith("pbkdf2_sha256$"):
+            try:
+                _, rounds_text, salt_b64, digest_b64 = stored_password.split("$", 3)
+                rounds = int(rounds_text)
+                salt = base64.b64decode(salt_b64.encode("ascii"))
+                expected = base64.b64decode(digest_b64.encode("ascii"))
+                current = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+                return hmac.compare_digest(current, expected)
+            except Exception:
+                return False
+
+        # 兼容历史明文密码
+        return hmac.compare_digest(stored_password, password)
+
+    def _ensure_password_hashes(self):
+        """首次启动时将历史明文密码迁移为哈希存储。"""
+        changed = False
+        for user in self.users.values():
+            raw = user.get("password", "")
+            if raw and not raw.startswith("pbkdf2_sha256$"):
+                user["password"] = self._hash_password(raw)
+                changed = True
+        if changed:
+            self._save_users(self.users)
+            logger.info("用户密码已从历史明文迁移到哈希存储")
     
     def _load_users(self) -> Dict[str, Dict]:
         """加载用户数据"""
@@ -31,7 +75,7 @@ class UserManager:
         default_users = {
             "9526": {
                 "employee_id": "9526",
-                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
+                "password": self._hash_password(self._config.DEFAULT_SUPERVISOR_PASSWORD),
                 "role": "supervisor",
                 "nickname": "主管A",
                 "avatar": "",
@@ -40,7 +84,7 @@ class UserManager:
             },
             "9527": {
                 "employee_id": "9527",
-                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
+                "password": self._hash_password(self._config.DEFAULT_SUPERVISOR_PASSWORD),
                 "role": "supervisor",
                 "nickname": "主管B",
                 "avatar": "",
@@ -49,7 +93,7 @@ class UserManager:
             },
             "9528": {
                 "employee_id": "9528",
-                "password": self._config.DEFAULT_SUPERVISOR_PASSWORD,
+                "password": self._hash_password(self._config.DEFAULT_SUPERVISOR_PASSWORD),
                 "role": "supervisor",
                 "nickname": "主管C",
                 "avatar": "",
@@ -80,7 +124,7 @@ class UserManager:
             认证成功返回用户信息，失败返回 None
         """
         user = self.users.get(employee_id)
-        if user and user["password"] == password:
+        if user and self._verify_password(password, user.get("password", "")):
             logger.info(f"工号 {employee_id} 认证成功")
             return {
                 "employee_id": user["employee_id"],
@@ -116,7 +160,7 @@ class UserManager:
         
         self.users[employee_id] = {
             "employee_id": employee_id,
-            "password": password,
+            "password": self._hash_password(password),
             "role": "employee",
             "nickname": nickname,
             "avatar": "",
@@ -157,7 +201,10 @@ class UserManager:
         # 更新字段
         for key in ["password", "nickname", "avatar"]:
             if key in updates:
-                user[key] = updates[key]
+                if key == "password":
+                    user[key] = self._hash_password(updates[key])
+                else:
+                    user[key] = updates[key]
         
         user["updated_at"] = datetime.now().isoformat()
         user["updated_by"] = operator_id

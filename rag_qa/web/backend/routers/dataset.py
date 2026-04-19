@@ -6,9 +6,10 @@
 import sys
 import os
 import json
-import shutil
 import asyncio
 import uuid
+import mimetypes
+import tempfile
 from pathlib import Path
 
 _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,10 +20,11 @@ for p in (_backend_dir, _rag_qa_path, os.path.join(_rag_qa_path, "core")):
         sys.path.insert(0, p)
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Header
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from typing import Optional
 
-from core.document_processor import process_documents
+from core.document_processor import process_single_file
+from core.object_storage import get_object_storage
 from core.auth_manager import get_auth_manager
 import rag_service
 
@@ -32,6 +34,17 @@ auth_manager = get_auth_manager()
 # 支持的文件类型
 ALLOWED_EXT = {".pdf", ".docx", ".ppt", ".pptx", ".txt", ".md", ".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 KNOWLEDGE_FILES_ROOT = Path(_rag_qa_path) / "user_data" / "knowledge_files"
+
+
+def _sse_error(message: str) -> StreamingResponse:
+    async def stream():
+        yield f"data: {json.dumps({'type': 'error', 'data': message}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 def _ensure_source_dir(source: str) -> Path:
@@ -64,40 +77,61 @@ async def upload_document(
       {"type": "done",     "chunks": N, "filename": "..."}
       {"type": "error",    "data": "..."}
     """
-    _require_supervisor(authorization)
+    try:
+        _require_supervisor(authorization)
+    except HTTPException as e:
+        return _sse_error(str(e.detail))
 
     # 校验文件类型
     ext = os.path.splitext(file.filename)[1].lower()
     if ext not in ALLOWED_EXT:
-        return {"error": f"不支持的文件类型 {ext}，支持：{', '.join(ALLOWED_EXT)}"}
+        return _sse_error(f"不支持的文件类型 {ext}，支持：{', '.join(ALLOWED_EXT)}")
 
     # 保存文件到持久目录：user_data/knowledge_files/{source}/{file_id}__{original_name}
-    source_dir = _ensure_source_dir(source)
     file_id = uuid.uuid4().hex[:12]
-    stored_name = f"{file_id}__{file.filename}"
-    file_path = str(source_dir / stored_name)
+    file_name = file.filename or f"upload{ext}"
     content  = await file.read()
-    with open(file_path, "wb") as f:
-        f.write(content)
+
+    storage = get_object_storage()
+    storage_uri = storage.put_bytes(source, file_id, file_name, content)
+
+    local_processing_path = None
+    processing_path = storage_uri
+    if storage.backend != "local":
+        temp_dir = tempfile.mkdtemp(prefix="upload_process_")
+        local_processing_path = os.path.join(temp_dir, f"{file_id}{ext}")
+        with open(local_processing_path, "wb") as f:
+            f.write(content)
+        processing_path = local_processing_path
 
     conf         = rag_service.get_config()
     vector_store = rag_service.get_vector_store()
+    if vector_store is None:
+        return _sse_error("向量服务未就绪，请先启动 Milvus 后重试")
+
     loop         = asyncio.get_event_loop()
 
     async def stream():
         try:
-            yield f"data: {json.dumps({'type': 'progress', 'step': f'文件已保存：{file.filename}', 'pct': 10}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'progress', 'step': f'文件已保存：{file_name}', 'pct': 10}, ensure_ascii=False)}\n\n"
 
             # 文档处理（分块）
             chunks = await loop.run_in_executor(
                 None,
-                lambda: process_documents(
-                    str(source_dir),
+                lambda: process_single_file(
+                    processing_path,
                     conf.PARENT_CHUNK_SIZE,
                     conf.CHILD_CHUNK_SIZE,
                     conf.CHUNK_OVERLAP,
                 ),
             )
+
+            for chunk in chunks:
+                chunk.metadata["source"] = source
+                chunk.metadata["file_id"] = file_id
+                chunk.metadata["file_name"] = file_name
+                chunk.metadata["file_path"] = storage_uri
+
             yield f"data: {json.dumps({'type': 'progress', 'step': f'文本分块完成：{len(chunks)} 个块', 'pct': 45}, ensure_ascii=False)}\n\n"
 
             if not chunks:
@@ -106,12 +140,26 @@ async def upload_document(
 
             # 向量化 + 入库（增量，不清空）
             yield f"data: {json.dumps({'type': 'progress', 'step': '正在向量化并写入数据库…', 'pct': 60}, ensure_ascii=False)}\n\n"
-            await loop.run_in_executor(None, lambda: vector_store.add_documents([c for c in chunks if c.metadata.get("file_id") == file_id]))
+            await loop.run_in_executor(None, lambda: vector_store.add_documents(chunks))
 
-            file_chunks = len([c for c in chunks if c.metadata.get("file_id") == file_id])
-            yield f"data: {json.dumps({'type': 'done', 'chunks': file_chunks, 'filename': file.filename, 'file_id': file_id}, ensure_ascii=False)}\n\n"
+            file_chunks = len(chunks)
+            yield f"data: {json.dumps({'type': 'done', 'chunks': file_chunks, 'filename': file_name, 'file_id': file_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
+            try:
+                storage.delete_uri(storage_uri)
+            except Exception:
+                pass
             yield f"data: {json.dumps({'type': 'error', 'data': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            if local_processing_path:
+                try:
+                    os.remove(local_processing_path)
+                except Exception:
+                    pass
+                try:
+                    os.rmdir(os.path.dirname(local_processing_path))
+                except Exception:
+                    pass
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                               headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -120,6 +168,7 @@ async def upload_document(
 @router.get("/files")
 def list_files(source: str = ""):
     """返回原始上传文件清单（来自持久目录），并附带向量块数量。"""
+    storage = get_object_storage()
     vector_store = rag_service.get_vector_store()
     knowledge_stats = rag_service.get_knowledge_stats()
     overview_files = {
@@ -128,11 +177,12 @@ def list_files(source: str = ""):
     }
 
     source_dirs = []
-    if source:
-        source_dirs = [_ensure_source_dir(source)]
-    else:
-        if KNOWLEDGE_FILES_ROOT.exists():
-            source_dirs = [p for p in KNOWLEDGE_FILES_ROOT.iterdir() if p.is_dir()]
+    if storage.backend == "local":
+        if source:
+            source_dirs = [_ensure_source_dir(source)]
+        else:
+            if KNOWLEDGE_FILES_ROOT.exists():
+                source_dirs = [p for p in KNOWLEDGE_FILES_ROOT.iterdir() if p.is_dir()]
 
     files = []
     for src_dir in source_dirs:
@@ -154,7 +204,7 @@ def list_files(source: str = ""):
 
             chunks = 0
             can_delete = bool(file_id)
-            if file_id:
+            if file_id and vector_store is not None:
                 rows = vector_store.get_file_rows(file_id, limit=16384)
                 chunks = len(rows)
 
@@ -192,6 +242,7 @@ def list_files(source: str = ""):
 @router.get("/files/{file_id}/download")
 def download_file(file_id: str):
     """下载/查看原始上传文件。"""
+    storage = get_object_storage()
     candidate = None
     pattern = f"{file_id}__*"
     if KNOWLEDGE_FILES_ROOT.exists():
@@ -202,9 +253,23 @@ def download_file(file_id: str):
 
     if (not candidate or not candidate.exists()) and file_id:
         vector_store = rag_service.get_vector_store()
+        if vector_store is None:
+            raise HTTPException(status_code=503, detail="向量服务未就绪")
         rows = vector_store.get_file_rows(file_id, limit=1)
         if rows:
             file_path = rows[0].get("file_path")
+            if file_path and file_path.startswith("s3://"):
+                try:
+                    content = storage.get_bytes(file_path)
+                    _, object_key = file_path[5:].split("/", 1)
+                    name = object_key.split("/")[-1]
+                    if "__" in name:
+                        name = name.split("__", 1)[1]
+                    media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{name}"}
+                    return Response(content=content, media_type=media_type, headers=headers)
+                except Exception as e:
+                    raise HTTPException(status_code=404, detail=f"对象存储文件不存在: {e}")
             if file_path and os.path.exists(file_path):
                 candidate = Path(file_path)
 
@@ -219,16 +284,37 @@ def download_file(file_id: str):
 def download_legacy_file(name: str, source: str = ""):
     """尝试按历史元数据定位并下载原始文件。"""
     vector_store = rag_service.get_vector_store()
+    if vector_store is None:
+        raise HTTPException(status_code=503, detail="向量服务未就绪")
+
     rows = vector_store.get_file_rows_by_name(name, source=source, limit=100)
     if not rows:
         raise HTTPException(status_code=404, detail="未找到历史文件元数据")
 
     # 优先返回真实原文件，避免返回 OCR 缓存文件
     valid_paths = []
+    storage = get_object_storage()
+    s3_paths = []
     for row in rows:
         fp = row.get("file_path")
+        if fp and fp.startswith("s3://"):
+            s3_paths.append(fp)
+            continue
         if fp and os.path.exists(fp):
             valid_paths.append(fp)
+
+    if s3_paths:
+        try:
+            content = storage.get_bytes(s3_paths[0])
+            _, object_key = s3_paths[0][5:].split("/", 1)
+            download_name = object_key.split("/")[-1]
+            if "__" in download_name:
+                download_name = download_name.split("__", 1)[1]
+            media_type = mimetypes.guess_type(download_name)[0] or "application/octet-stream"
+            headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{download_name}"}
+            return Response(content=content, media_type=media_type, headers=headers)
+        except Exception:
+            pass
 
     if not valid_paths:
         raise HTTPException(status_code=404, detail="历史文件原始路径不存在")
@@ -245,23 +331,34 @@ def download_legacy_file(name: str, source: str = ""):
 @router.delete("/files/{file_id}")
 def delete_file(file_id: str):
     """删除文件对应向量块，并删除本地原始文件。"""
+    storage = get_object_storage()
     vector_store = rag_service.get_vector_store()
+    if vector_store is None:
+        raise HTTPException(status_code=503, detail="向量服务未就绪")
+
     result = vector_store.delete_file_by_id(file_id)
 
     removed_files = 0
-    pattern = f"{file_id}__*"
-    if KNOWLEDGE_FILES_ROOT.exists():
-        for fp in KNOWLEDGE_FILES_ROOT.rglob(pattern):
-            if fp.is_file():
-                try:
-                    os.remove(fp)
-                    removed_files += 1
-                except Exception:
-                    pass
+    if storage.backend == "local":
+        pattern = f"{file_id}__*"
+        if KNOWLEDGE_FILES_ROOT.exists():
+            for fp in KNOWLEDGE_FILES_ROOT.rglob(pattern):
+                if fp.is_file():
+                    try:
+                        os.remove(fp)
+                        removed_files += 1
+                    except Exception:
+                        pass
 
     if removed_files == 0:
         for fp in result.get("file_paths", []):
-            if fp and os.path.exists(fp):
+            if fp and fp.startswith("s3://"):
+                try:
+                    storage.delete_uri(fp)
+                    removed_files += 1
+                except Exception:
+                    pass
+            elif fp and os.path.exists(fp):
                 try:
                     os.remove(fp)
                     removed_files += 1

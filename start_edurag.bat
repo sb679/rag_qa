@@ -9,7 +9,7 @@ set "UV_ACTIVATE_BAT=%UV_VENV_DIR%\Scripts\activate.bat"
 if not exist "%UV_PYTHON%" (
 	echo.
 	echo uv virtual environment interpreter not found: %UV_PYTHON%
-	echo Please create/install dependencies in rag_qa\.venv first.
+	echo Please create/install dependencies in rag_qa\.venv first
 	set "EXIT_CODE=1"
 	goto :launcher_end
 )

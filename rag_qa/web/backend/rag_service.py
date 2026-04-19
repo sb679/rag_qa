@@ -34,6 +34,41 @@ from openai import OpenAI
 
 _config       = Config()
 _conv_manager = get_conversation_manager()
+_init_error: Optional[str] = None
+_init_duration_sec: float = 0.0
+
+_CLASSIFY_TIMEOUT_SEC = 8
+_PLAN_TIMEOUT_SEC = 20
+_MAIN_STREAM_TOTAL_TIMEOUT_SEC = 150
+_MAIN_STREAM_IDLE_TIMEOUT_SEC = 30
+_COMPARE_STREAM_TOTAL_TIMEOUT_SEC = 60
+_COMPARE_STREAM_IDLE_TIMEOUT_SEC = 20
+_SAVE_TIMEOUT_SEC = 8
+
+_LLM_CIRCUIT_THRESHOLD = 3
+_LLM_CIRCUIT_COOLDOWN_SEC = 90
+_llm_failure_count = 0
+_llm_circuit_open_until = 0.0
+_llm_circuit_lock = threading.Lock()
+
+
+def _is_llm_circuit_open() -> bool:
+    return time.time() < _llm_circuit_open_until
+
+
+def _record_llm_success():
+    global _llm_failure_count, _llm_circuit_open_until
+    with _llm_circuit_lock:
+        _llm_failure_count = 0
+        _llm_circuit_open_until = 0.0
+
+
+def _record_llm_failure():
+    global _llm_failure_count, _llm_circuit_open_until
+    with _llm_circuit_lock:
+        _llm_failure_count += 1
+        if _llm_failure_count >= _LLM_CIRCUIT_THRESHOLD:
+            _llm_circuit_open_until = time.time() + _LLM_CIRCUIT_COOLDOWN_SEC
 
 _llm_client = OpenAI(
     api_key  = _config.DASHSCOPE_API_KEY,
@@ -42,6 +77,9 @@ _llm_client = OpenAI(
 
 # ── LLM 调用（生成器，yield token） ───────────────────────────────────────────
 def _call_llm(prompt: str, system: str = "你是采矿安全领域的专家智能助手，回答准确、专业、有条理。"):
+    if _is_llm_circuit_open():
+        raise RuntimeError("LLM 熔断中，请稍后重试")
+
     completion = _llm_client.chat.completions.create(
         model    = _config.LLM_MODEL,
         messages = [
@@ -55,17 +93,24 @@ def _call_llm(prompt: str, system: str = "你是采矿安全领域的专家智�
         if chunk.choices and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
 
-# 初始化 VectorStore 和 RAGSystem
-_vector_store = VectorStore(
-    collection_name = _config.MILVUS_COLLECTION_NAME,
-    host            = _config.MILVUS_HOST,
-    port            = _config.MILVUS_PORT,
-    database        = _config.MILVUS_DATABASE_NAME,
-)
-
-_rag_system = RAGSystem(_vector_store, _call_llm, _conv_manager)
-
-logger.info("RAG service ready")
+# 初始化 VectorStore 和 RAGSystem（容错：Milvus 不可用时允许服务降级启动）
+_vector_store = None
+_rag_system = None
+try:
+    _init_started = time.time()
+    _vector_store = VectorStore(
+        collection_name = _config.MILVUS_COLLECTION_NAME,
+        host            = _config.MILVUS_HOST,
+        port            = _config.MILVUS_PORT,
+        database        = _config.MILVUS_DATABASE_NAME,
+    )
+    _rag_system = RAGSystem(_vector_store, _call_llm, _conv_manager)
+    _init_duration_sec = round(time.time() - _init_started, 3)
+    logger.info("RAG service ready")
+except Exception as e:
+    _init_error = str(e)
+    _init_duration_sec = round(time.time() - _init_started, 3)
+    logger.exception("RAG service 初始化失败，进入降级模式")
 
 # ── 数据结构 ──────────────────────────────────────────────────────────────────
 @dataclass
@@ -115,6 +160,9 @@ _BASE_SCORES = [0.94, 0.88, 0.82, 0.76, 0.71]
 
 def _build_source_details(context_docs: List[Any], query: str, source_filter: Optional[str]) -> List[Dict[str, Any]]:
     """构建前端来源详情：包含完整父块与命中的子块片段。"""
+    if _vector_store is None:
+        return []
+
     sub_chunks = []
     try:
         sub_chunks = _vector_store.search_subchunks(
@@ -240,6 +288,9 @@ def _promote_query_type_by_retrieval(query: str, query_type: str, source_filter:
     if query_type != "通用知识":
         return query_type
 
+    if _vector_store is None:
+        return query_type
+
     try:
         docs = _vector_store.hybrid_search_with_rerank(query, k=1, source_filter=source_filter)
     except Exception as e:
@@ -304,7 +355,11 @@ def _prepare_query_plan(
     }
 
 
-async def _stream_sync_tokens(token_factory) -> AsyncGenerator[str, None]:
+async def _stream_sync_tokens(
+    token_factory,
+    total_timeout_sec: int,
+    idle_timeout_sec: int,
+) -> AsyncGenerator[str, None]:
     """将同步 token 生成器桥接为异步流，确保真正实时推送。"""
     queue: Queue = Queue()
     done_marker = object()
@@ -321,8 +376,16 @@ async def _stream_sync_tokens(token_factory) -> AsyncGenerator[str, None]:
 
     threading.Thread(target=worker, daemon=True).start()
 
+    started = time.time()
     while True:
-        item = await loop.run_in_executor(None, queue.get)
+        elapsed = time.time() - started
+        if elapsed > total_timeout_sec:
+            raise TimeoutError(f"流式输出超时（>{total_timeout_sec}s）")
+
+        item = await asyncio.wait_for(
+            loop.run_in_executor(None, queue.get),
+            timeout=idle_timeout_sec,
+        )
         if item is done_marker:
             break
         if isinstance(item, Exception):
@@ -332,16 +395,20 @@ async def _stream_sync_tokens(token_factory) -> AsyncGenerator[str, None]:
 
 # ── 公开 API ──────────────────────────────────────────────────────────────────
 def get_system_status() -> Dict[str, Any]:
+    milvus_connected = _vector_store is not None
     try:
+        if _vector_store is None:
+            raise RuntimeError(_init_error or "vector store unavailable")
         count = _vector_store.client.get_collection_stats(_config.MILVUS_COLLECTION_NAME)
         row_count = count.get("row_count", "未知")
     except Exception:
         row_count = "连接中"
 
     return {
-        "rag_available":    True,
+        "rag_available":    _rag_system is not None,
+        "service_ready":    (_rag_system is not None and _vector_store is not None),
         "mode":             "真实模式",
-        "milvus_connected": True,
+        "milvus_connected": milvus_connected,
         "llm_model":        _config.LLM_MODEL,
         "embedding_model":  "BGE-M3",
         "reranker_model":   "BGE-Reranker-Large",
@@ -352,10 +419,43 @@ def get_system_status() -> Dict[str, Any]:
         "candidate_m":      _config.CANDIDATE_M,
         "chunk_size":       f"{_config.PARENT_CHUNK_SIZE}/{_config.CHILD_CHUNK_SIZE}",
         "total_vectors":    row_count,
+        "init_error":       _init_error,
+        "init_duration_sec": _init_duration_sec,
+        "dependency_checks": {
+            "llm_client": True,
+            "milvus": milvus_connected,
+            "query_classifier": (_rag_system is not None),
+            "strategy_selector": (_rag_system is not None),
+            "vector_store": (_vector_store is not None),
+        },
+        "timeouts": {
+            "classify_sec": _CLASSIFY_TIMEOUT_SEC,
+            "plan_sec": _PLAN_TIMEOUT_SEC,
+            "main_stream_total_sec": _MAIN_STREAM_TOTAL_TIMEOUT_SEC,
+            "main_stream_idle_sec": _MAIN_STREAM_IDLE_TIMEOUT_SEC,
+            "compare_stream_total_sec": _COMPARE_STREAM_TOTAL_TIMEOUT_SEC,
+            "compare_stream_idle_sec": _COMPARE_STREAM_IDLE_TIMEOUT_SEC,
+            "save_sec": _SAVE_TIMEOUT_SEC,
+        },
+        "llm_circuit": {
+            "open": _is_llm_circuit_open(),
+            "failure_count": _llm_failure_count,
+            "cooldown_sec": _LLM_CIRCUIT_COOLDOWN_SEC,
+        },
     }
 
 
 def get_knowledge_stats() -> Dict[str, Any]:
+    if _vector_store is None:
+        return {
+            "total_chunks": 0,
+            "total_books": 0,
+            "source_count": 0,
+            "avg_chunks_per_book": 0,
+            "sources": [],
+            "files": [],
+        }
+
     try:
         return _vector_store.get_knowledge_overview()
     except Exception as e:
@@ -552,6 +652,10 @@ async def stream_chat_response(
       {"type": "done",  "data": {"session_id": "..."}}
       {"type": "error", "data": "..."}
     """
+    if _rag_system is None or _vector_store is None:
+        yield {"type": "error", "data": f"RAG 服务未就绪: {_init_error or '请检查 Milvus 与模型环境'}"}
+        return
+
     if not session_id:
         session_id = create_session()
 
@@ -562,23 +666,38 @@ async def stream_chat_response(
 
     # 2. 查询分类（快速）
     try:
-        raw_query_type = await loop.run_in_executor(
-            None, lambda: _rag_system.query_classifier.predict_category(query)
+        raw_query_type = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: _rag_system.query_classifier.predict_category(query)
+            ),
+            timeout=_CLASSIFY_TIMEOUT_SEC,
         )
         query_type = _normalize_query_type(query, raw_query_type)
-        query_type = await loop.run_in_executor(
-            None, lambda: _promote_query_type_by_retrieval(query, query_type, source_filter)
+        query_type = await asyncio.wait_for(
+            loop.run_in_executor(
+                None, lambda: _promote_query_type_by_retrieval(query, query_type, source_filter)
+            ),
+            timeout=_CLASSIFY_TIMEOUT_SEC,
         )
+    except TimeoutError:
+        yield {"type": "error", "data": "查询分类超时，请稍后重试"}
+        return
     except Exception as e:
         yield {"type": "error", "data": f"查询分类失败: {e}"}
         return
 
     # 3. 准备检索信息与回答 Prompt
     try:
-        plan = await loop.run_in_executor(
-            None,
-            lambda: _prepare_query_plan(query, source_filter, query_type, history_context),
+        plan = await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: _prepare_query_plan(query, source_filter, query_type, history_context),
+            ),
+            timeout=_PLAN_TIMEOUT_SEC,
         )
+    except TimeoutError:
+        yield {"type": "error", "data": "检索规划超时，请稍后重试"}
+        return
     except Exception as e:
         yield {"type": "error", "data": f"检索/生成失败: {e}"}
         return
@@ -590,10 +709,20 @@ async def stream_chat_response(
     # 5. 主答案真实流式输出
     answer_parts: List[str] = []
     try:
-        async for token in _stream_sync_tokens(lambda: _call_llm(plan["prompt"])):
+        async for token in _stream_sync_tokens(
+            lambda: _call_llm(plan["prompt"]),
+            total_timeout_sec=_MAIN_STREAM_TOTAL_TIMEOUT_SEC,
+            idle_timeout_sec=_MAIN_STREAM_IDLE_TIMEOUT_SEC,
+        ):
             answer_parts.append(token)
             yield {"type": "token", "data": token}
+        _record_llm_success()
+    except TimeoutError as e:
+        _record_llm_failure()
+        yield {"type": "error", "data": f"主答案生成超时: {e}"}
+        return
     except Exception as e:
+        _record_llm_failure()
         yield {"type": "error", "data": f"主答案流式生成失败: {e}"}
         return
 
@@ -604,17 +733,27 @@ async def stream_chat_response(
                 lambda: _call_llm(
                     prompt=query,
                     system="你是一个通用助手，根据自身知识直接回答问题，无需引用任何专业手册。回答简洁明了。",
-                )
+                ),
+                total_timeout_sec=_COMPARE_STREAM_TOTAL_TIMEOUT_SEC,
+                idle_timeout_sec=_COMPARE_STREAM_IDLE_TIMEOUT_SEC,
             ):
                 yield {"type": "llm_token", "data": token}
+            _record_llm_success()
         except Exception as e:
+            _record_llm_failure()
             logger.warning(f"通用 LLM 对比生成失败: {e}")
 
     # 7. 保存会话
     answer_text = "".join(answer_parts)
-    await loop.run_in_executor(
-        None,
-        lambda: _save_conversation(session_id, query, answer_text, retrieval_info),
-    )
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(
+                None,
+                lambda: _save_conversation(session_id, query, answer_text, retrieval_info),
+            ),
+            timeout=_SAVE_TIMEOUT_SEC,
+        )
+    except TimeoutError:
+        logger.warning("保存会话超时，已跳过本次持久化")
 
     yield {"type": "done", "data": {"session_id": session_id}}

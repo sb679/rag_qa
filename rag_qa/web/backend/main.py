@@ -10,7 +10,10 @@ sys.path.insert(0, _backend_dir)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from base import logger
 from routers import chat, sessions, knowledge, dataset, testgen, auth, feedback, kb_version, users
+
+_startup_errors = []
 
 app = FastAPI(
     title       = "EduRAG 采矿安全智能问答系统",
@@ -43,11 +46,18 @@ def startup_tasks():
     try:
         import rag_service
         rag_service.load_or_refresh_chat_examples(force=False)
-    except Exception:
-        pass
+    except Exception as e:
+        _startup_errors.append(str(e))
+        logger.exception("启动预热失败")
 
 @app.get("/api/health")
 def health():
+    if _startup_errors:
+        return {
+            "status": "degraded",
+            "mode": "真实模式",
+            "startup_errors": _startup_errors[-3:],
+        }
     return {"status": "ok", "mode": "真实模式"}
 
 if __name__ == "__main__":

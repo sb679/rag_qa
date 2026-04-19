@@ -197,6 +197,81 @@ def process_documents(directory_path, parent_chunk_size=conf.PARENT_CHUNK_SIZE,
     logger.info(f"子块数量: {len(child_chunks)}")
     # 返回所有子块列表
     return child_chunks
+
+
+def process_single_file(file_path, parent_chunk_size=conf.PARENT_CHUNK_SIZE,
+                        child_chunk_size=conf.CHILD_CHUNK_SIZE,
+                        chunk_overlap=conf.CHUNK_OVERLAP):
+    """仅处理一个文件，避免上传单文件时重复扫描整个目录。"""
+    file_path = os.path.abspath(file_path)
+    if not os.path.isfile(file_path):
+        logger.warning(f"文件不存在，无法处理: {file_path}")
+        return []
+
+    file_extension = os.path.splitext(file_path)[1].lower()
+    if file_extension not in document_loaders:
+        logger.warning(f"不支持的文件类型: {file_path}")
+        return []
+
+    source = os.path.basename(os.path.dirname(file_path)).replace("_data", "")
+    loader_class = document_loaders[file_extension]
+
+    try:
+        if file_extension == ".txt":
+            loader = loader_class(file_path, encoding="utf-8")
+        elif file_extension == ".pdf":
+            loader = loader_class(file_path, use_cache=True)
+        else:
+            loader = loader_class(file_path)
+
+        loaded_docs = loader.load()
+    except Exception as e:
+        logger.error(f"加载文件 {file_path} 失败: {str(e)}")
+        return []
+
+    documents = []
+    for doc in loaded_docs:
+        stored_name = os.path.basename(file_path)
+        file_id = ""
+        file_name = stored_name
+        if "__" in stored_name:
+            prefix, original = stored_name.split("__", 1)
+            if len(prefix) >= 8:
+                file_id = prefix
+                file_name = original or stored_name
+
+        doc.metadata["source"] = source
+        doc.metadata["file_path"] = file_path
+        doc.metadata["file_name"] = file_name
+        doc.metadata["file_id"] = file_id
+        doc.metadata["timestamp"] = datetime.now().isoformat()
+        documents.append(doc)
+
+    logger.info(f"单文件加载完成: {file_path}, 文档数: {len(documents)}")
+
+    parent_splitter = ChineseRecursiveTextSplitter(chunk_size=parent_chunk_size, chunk_overlap=chunk_overlap)
+    child_splitter = ChineseRecursiveTextSplitter(chunk_size=child_chunk_size, chunk_overlap=chunk_overlap)
+    markdown_parent_splitter = MarkdownTextSplitter(chunk_size=parent_chunk_size, chunk_overlap=chunk_overlap)
+    markdown_child_splitter = MarkdownTextSplitter(chunk_size=child_chunk_size, chunk_overlap=chunk_overlap)
+
+    is_markdown = (file_extension == '.md')
+    parent_splitter_to_use = markdown_parent_splitter if is_markdown else parent_splitter
+    child_splitter_to_use = markdown_child_splitter if is_markdown else child_splitter
+
+    child_chunks = []
+    for i, doc in enumerate(documents):
+        parent_docs = parent_splitter_to_use.split_documents([doc])
+        for j, parent_doc in enumerate(parent_docs):
+            parent_id = f"doc_{i}_parent_{j}"
+            sub_chunks = child_splitter_to_use.split_documents([parent_doc])
+            for k, sub_chunk in enumerate(sub_chunks):
+                sub_chunk.metadata["parent_id"] = parent_id
+                sub_chunk.metadata["parent_content"] = parent_doc.page_content
+                sub_chunk.metadata["id"] = f"{parent_id}_child_{k}"
+                child_chunks.append(sub_chunk)
+
+    logger.info(f"单文件子块数量: {len(child_chunks)}")
+    return child_chunks
 if __name__ == '__main__':
     directory_path = '/Users/ligang/Desktop/EduRAG课堂资料/codes/integrated_qa_system/rag_qa/data/mining'
     # documents = load_documents_from_directory(directory_path)
