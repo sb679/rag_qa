@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "lint": "eslint \"src/**/*.{js,vue}\"",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -17,6 +18,11 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.1.2",
-    "vite": "^5.3.4"
+    "eslint": "^8.57.1",
+    "eslint-plugin-vue": "^9.33.0",
+    "unplugin-auto-import": "^0.18.3",
+    "unplugin-vue-components": "^0.27.2",
+    "vite": "^5.3.4",
+    "vite-plugin-pwa": "^0.20.5"
   }
 }

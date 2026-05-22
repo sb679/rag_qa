@@ -11,6 +11,7 @@ import uuid
 import mimetypes
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 
 _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _web_dir     = os.path.dirname(_backend_dir)
@@ -21,19 +22,45 @@ for p in (_backend_dir, _rag_qa_path, os.path.join(_rag_qa_path, "core")):
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Header
 from fastapi.responses import StreamingResponse, FileResponse, Response
+from pydantic import BaseModel
 from typing import Optional
 
 from core.document_processor import process_single_file, SUPPORTED_EXTENSIONS
 from core.object_storage import get_object_storage
 from core.auth_manager import get_auth_manager
-import rag_service
+from organize_document_corpus import scan_documents, write_manifest
+from base import logger
+from rag_runtime import rag_service
 
 router = APIRouter()
 auth_manager = get_auth_manager()
 
 # 支持的文件类型
 ALLOWED_EXT = SUPPORTED_EXTENSIONS
-KNOWLEDGE_FILES_ROOT = Path(_rag_qa_path) / "user_data" / "knowledge_files"
+RAG_QA_ROOT = Path(_rag_qa_path)
+KNOWLEDGE_FILES_ROOT = RAG_QA_ROOT / "user_data" / "knowledge_files"
+
+
+def _build_download_headers(filename: str) -> dict:
+    safe_name = str(filename or "download").replace('"', '')
+    encoded_name = quote(safe_name)
+    return {"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"}
+CORPUS_MANIFEST_PATH = RAG_QA_ROOT / "user_data" / "corpus_unified" / "document_manifest.json"
+
+
+class ResidualCleanupItem(BaseModel):
+    file_id: str = ""
+    source: str = ""
+    name: str = ""
+
+
+class ResidualCleanupRequest(BaseModel):
+    source: Optional[str] = None
+    names: list[str] = []
+    items: list[ResidualCleanupItem] = []
+    dry_run: bool = True
+    confirm: bool = False
+    max_items: Optional[int] = None
 
 
 def _sse_error(message: str) -> StreamingResponse:
@@ -53,6 +80,14 @@ def _ensure_source_dir(source: str) -> Path:
     return source_dir
 
 
+def _refresh_document_manifest(storage_backend: str) -> None:
+    if storage_backend != "local":
+        return
+
+    records = scan_documents(RAG_QA_ROOT)
+    write_manifest(records, CORPUS_MANIFEST_PATH)
+
+
 def _require_supervisor(authorization: Optional[str]):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="未提供认证令牌")
@@ -63,6 +98,105 @@ def _require_supervisor(authorization: Optional[str]):
         raise HTTPException(status_code=401, detail="令牌无效或已过期")
     if payload.get("role") != "supervisor":
         raise HTTPException(status_code=403, detail="仅主管可上传知识库文件")
+
+
+def _list_storage_files(source: str = ""):
+    storage = get_object_storage()
+    storage_backend = getattr(storage, "backend", "unknown")
+    if storage_backend != "local":
+        return {
+            "storage": storage,
+            "storage_backend": storage_backend,
+            "storage_enumerated": False,
+            "files": [],
+        }
+
+    source_dirs = []
+    if source:
+        source_dirs = [_ensure_source_dir(source)]
+    elif KNOWLEDGE_FILES_ROOT.exists():
+        source_dirs = [p for p in KNOWLEDGE_FILES_ROOT.iterdir() if p.is_dir()]
+
+    files = []
+    for src_dir in source_dirs:
+        src_name = src_dir.name
+        if not src_dir.exists():
+            continue
+
+        for file_path in sorted(src_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
+            if not file_path.is_file() or file_path.name.endswith('.ocr_cache.json'):
+                continue
+
+            stored_name = file_path.name
+            if "__" in stored_name:
+                file_id, original_name = stored_name.split("__", 1)
+            else:
+                file_id, original_name = "", stored_name
+
+            files.append(
+                {
+                    "file_id": file_id,
+                    "name": original_name,
+                    "source": src_name,
+                    "path": str(file_path),
+                }
+            )
+
+    return {
+        "storage": storage,
+        "storage_backend": storage_backend,
+        "storage_enumerated": True,
+        "files": files,
+    }
+
+
+def _collect_residual_candidates(source: str = ""):
+    storage_state = _list_storage_files(source=source)
+    vector_store = rag_service.get_vector_store()
+    if vector_store is None:
+        raise HTTPException(status_code=503, detail="向量服务未就绪")
+
+    knowledge_stats = rag_service.get_knowledge_stats()
+    indexed_files = knowledge_stats.get("files", [])
+    storage_files = storage_state["files"]
+
+    current_file_ids = {item.get("file_id") for item in storage_files if item.get("file_id")}
+    current_file_keys = {
+        ((item.get("source") or "unknown"), item.get("name") or "")
+        for item in storage_files
+    }
+
+    residuals = []
+    for item in indexed_files:
+        item_source = item.get("source") or "unknown"
+        item_name = item.get("name") or ""
+        item_file_id = item.get("file_id") or ""
+        matched = False
+        if item_file_id:
+            matched = item_file_id in current_file_ids
+        if not matched:
+            matched = (item_source, item_name) in current_file_keys
+        if matched:
+            continue
+        residuals.append(
+            {
+                "file_id": item_file_id,
+                "name": item_name,
+                "source": item_source,
+                "chunks": int(item.get("chunks") or 0),
+                "ratio": item.get("ratio", 0),
+                "can_delete_by_id": bool(item_file_id),
+                "delete_mode": "file_id" if item_file_id else "source_name",
+            }
+        )
+
+    residuals.sort(key=lambda item: item.get("chunks", 0), reverse=True)
+    return {
+        "storage_state": storage_state,
+        "vector_store": vector_store,
+        "knowledge_stats": knowledge_stats,
+        "residuals": residuals,
+    }
 
 
 @router.post("/upload")
@@ -92,6 +226,11 @@ async def upload_document(
     file_name = file.filename or f"upload{ext}"
     content  = await file.read()
 
+    conf         = rag_service.get_config()
+    vector_store = rag_service.get_vector_store()
+    if vector_store is None:
+        return _sse_error("向量服务未就绪，请先启动 Milvus 后重试")
+
     storage = get_object_storage()
     storage_uri = storage.put_bytes(source, file_id, file_name, content)
 
@@ -103,11 +242,6 @@ async def upload_document(
         with open(local_processing_path, "wb") as f:
             f.write(content)
         processing_path = local_processing_path
-
-    conf         = rag_service.get_config()
-    vector_store = rag_service.get_vector_store()
-    if vector_store is None:
-        return _sse_error("向量服务未就绪，请先启动 Milvus 后重试")
 
     loop         = asyncio.get_event_loop()
 
@@ -143,6 +277,9 @@ async def upload_document(
             yield f"data: {json.dumps({'type': 'progress', 'step': '正在向量化并写入数据库…', 'pct': 60}, ensure_ascii=False)}\n\n"
             await loop.run_in_executor(None, lambda: vector_store.add_documents(chunks))
 
+            yield f"data: {json.dumps({'type': 'progress', 'step': '正在刷新文档清单…', 'pct': 85}, ensure_ascii=False)}\n\n"
+            await loop.run_in_executor(None, lambda: _refresh_document_manifest(storage.backend))
+
             file_chunks = len(chunks)
             yield f"data: {json.dumps({'type': 'done', 'chunks': file_chunks, 'filename': file_name, 'file_id': file_id}, ensure_ascii=False)}\n\n"
         except Exception as e:
@@ -169,75 +306,217 @@ async def upload_document(
 @router.get("/files")
 def list_files(source: str = ""):
     """返回原始上传文件清单（来自持久目录），并附带向量块数量。"""
-    storage = get_object_storage()
-    vector_store = rag_service.get_vector_store()
-    knowledge_stats = rag_service.get_knowledge_stats()
+    storage = None
+    storage_backend = "unknown"
+    storage_enumerated = False
+    storage_files = []
+    try:
+        storage_state = _list_storage_files(source=source)
+        storage = storage_state["storage"]
+        storage_backend = storage_state["storage_backend"]
+        storage_enumerated = storage_state["storage_enumerated"]
+        storage_files = storage_state["files"]
+    except Exception as exc:
+        logger.warning("list_files storage init failed, fallback to overview only: %s", exc)
+
+    vector_store = None
+    knowledge_stats = {}
+    try:
+        vector_store = rag_service.get_vector_store()
+        knowledge_stats = rag_service.get_knowledge_stats()
+    except Exception as exc:
+        logger.warning("list_files rag_service call failed, fallback to storage only: %s", exc)
+
     overview_files = {
         f.get("file_id") or f.get("name"): f
         for f in knowledge_stats.get("files", [])
     }
 
-    source_dirs = []
-    if storage.backend == "local":
-        if source:
-            source_dirs = [_ensure_source_dir(source)]
-        else:
-            if KNOWLEDGE_FILES_ROOT.exists():
-                source_dirs = [p for p in KNOWLEDGE_FILES_ROOT.iterdir() if p.is_dir()]
-
     files = []
-    for src_dir in source_dirs:
-        src_name = src_dir.name
-        if not src_dir.exists():
-            continue
+    for item in storage_files:
+        file_id = item.get("file_id") or ""
+        chunks = 0
+        can_delete = bool(file_id)
+        if file_id and vector_store is not None:
+            rows = vector_store.get_file_rows(file_id, limit=16384)
+            chunks = len(rows)
 
-        for file_path in sorted(src_dir.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not file_path.is_file():
-                continue
-            if file_path.name.endswith('.ocr_cache.json'):
-                continue
-
-            stored_name = file_path.name
-            if "__" in stored_name:
-                file_id, original_name = stored_name.split("__", 1)
-            else:
-                file_id, original_name = "", stored_name
-
-            chunks = 0
-            can_delete = bool(file_id)
-            if file_id and vector_store is not None:
-                rows = vector_store.get_file_rows(file_id, limit=16384)
-                chunks = len(rows)
-
-            files.append(
-                {
-                    "file_id": file_id,
-                    "name": original_name,
-                    "source": src_name,
-                    "chunks": chunks,
-                    "ratio": 0,
-                    "can_view": True,
-                    "can_delete": can_delete,
-                }
-            )
-
-    seen_keys = {f.get("file_id") or f.get("name") for f in files}
-    for key, item in overview_files.items():
-        if key in seen_keys:
-            continue
         files.append(
             {
-                "file_id": item.get("file_id", ""),
-                "name": item.get("name", key),
+                "file_id": file_id,
+                "name": item.get("name", ""),
                 "source": item.get("source", "unknown"),
-                "chunks": item.get("chunks", 0),
-                "ratio": item.get("ratio", 0),
-                "can_view": bool(item.get("file_id")),
-                "can_delete": bool(item.get("file_id")),
+                "chunks": chunks,
+                "ratio": 0,
+                "can_view": True,
+                "can_delete": can_delete,
             }
         )
 
-    return {"files": files}
+    should_fallback_to_overview = not storage_enumerated
+    if should_fallback_to_overview:
+        seen_keys = {f.get("file_id") or f.get("name") for f in files}
+        for key, item in overview_files.items():
+            if key in seen_keys:
+                continue
+            files.append(
+                {
+                    "file_id": item.get("file_id", ""),
+                    "name": item.get("name", key),
+                    "source": item.get("source", "unknown"),
+                    "chunks": item.get("chunks", 0),
+                    "ratio": item.get("ratio", 0),
+                    "can_view": bool(item.get("file_id")),
+                    "can_delete": bool(item.get("file_id")),
+                }
+            )
+
+    current_vector_count = None
+    if not should_fallback_to_overview:
+        current_vector_count = sum(int(file.get("chunks") or 0) for file in files)
+
+    return {
+        "files": files,
+        "summary": {
+            "storage_enumerated": storage_enumerated,
+            "current_file_count": len(files) if not should_fallback_to_overview else None,
+            "current_vector_count": current_vector_count,
+        },
+    }
+
+
+@router.get("/residuals")
+def list_residual_vectors(
+    source: str = "",
+    limit: int = 200,
+    authorization: Optional[str] = Header(None),
+):
+    """预览当前存储中不存在、但仍留在索引里的历史残留向量。"""
+    _require_supervisor(authorization)
+
+    result = _collect_residual_candidates(source=source)
+    storage_state = result["storage_state"]
+    if not storage_state["storage_enumerated"]:
+        raise HTTPException(status_code=409, detail="当前存储后端不支持残留向量比对")
+
+    residuals = result["residuals"]
+    limited = residuals[: max(limit, 0)] if limit >= 0 else residuals
+    return {
+        "items": limited,
+        "summary": {
+            "storage_backend": storage_state["storage_backend"],
+            "storage_enumerated": storage_state["storage_enumerated"],
+            "indexed_document_count": result["knowledge_stats"].get("indexed_document_count", 0),
+            "current_file_count": len(storage_state["files"]),
+            "residual_document_count": len(residuals),
+            "residual_vector_count": sum(int(item.get("chunks") or 0) for item in residuals),
+            "returned_count": len(limited),
+        },
+    }
+
+
+@router.post("/residuals/cleanup")
+def cleanup_residual_vectors(
+    request: ResidualCleanupRequest,
+    authorization: Optional[str] = Header(None),
+):
+    """批量清理历史残留向量；默认 dry-run，实际删除需 confirm=true。"""
+    _require_supervisor(authorization)
+    if not request.dry_run and not request.confirm:
+        raise HTTPException(status_code=400, detail="实际删除前必须显式确认 confirm=true")
+
+    result = _collect_residual_candidates(source=request.source or "")
+    storage_state = result["storage_state"]
+    if not storage_state["storage_enumerated"]:
+        raise HTTPException(status_code=409, detail="当前存储后端不支持残留向量比对")
+
+    residuals = result["residuals"]
+    selected_items = request.items or []
+    if selected_items:
+        selected_keys = {
+            (
+                (item.file_id or "").strip(),
+                (item.source or "").strip(),
+                (item.name or "").strip(),
+            )
+            for item in selected_items
+            if (item.file_id or item.source or item.name)
+        }
+        residuals = [
+            item for item in residuals
+            if (
+                (item.get("file_id") or "").strip(),
+                (item.get("source") or "").strip(),
+                (item.get("name") or "").strip(),
+            ) in selected_keys
+        ]
+    selected_names = {name for name in request.names if name}
+    if selected_names and not selected_items:
+        residuals = [item for item in residuals if item.get("name") in selected_names]
+    if request.max_items is not None and request.max_items >= 0:
+        residuals = residuals[: request.max_items]
+
+    if request.dry_run:
+        return {
+            "dry_run": True,
+            "matched_items": residuals,
+            "summary": {
+                "matched_document_count": len(residuals),
+                "matched_vector_count": sum(int(item.get("chunks") or 0) for item in residuals),
+            },
+        }
+
+    vector_store = result["vector_store"]
+    storage = storage_state["storage"]
+    deleted_items = []
+    deleted_vector_count = 0
+    deleted_file_count = 0
+
+    for item in residuals:
+        if item.get("file_id"):
+            delete_result = vector_store.delete_file_by_id(item["file_id"])
+        else:
+            delete_result = vector_store.delete_file_by_source_and_name(item.get("source", ""), item.get("name", ""))
+
+        removed_files = 0
+        for fp in delete_result.get("file_paths", []):
+            if not fp:
+                continue
+            try:
+                if fp.startswith("s3://"):
+                    storage.delete_uri(fp)
+                elif os.path.exists(fp):
+                    os.remove(fp)
+                else:
+                    continue
+                removed_files += 1
+            except Exception:
+                pass
+
+        deleted_vector_count += int(delete_result.get("deleted_chunks", 0))
+        deleted_file_count += removed_files
+        deleted_items.append(
+            {
+                **item,
+                "deleted_chunks": int(delete_result.get("deleted_chunks", 0)),
+                "deleted_files": removed_files,
+            }
+        )
+
+    try:
+        _refresh_document_manifest(storage.backend)
+    except Exception as exc:
+        logger.warning("清理残留向量后刷新文档清单失败: %s", exc)
+
+    return {
+        "dry_run": False,
+        "deleted_items": deleted_items,
+        "summary": {
+            "deleted_document_count": len(deleted_items),
+            "deleted_vector_count": deleted_vector_count,
+            "deleted_files": deleted_file_count,
+        },
+    }
 
 
 @router.get("/files/{file_id}/download")
@@ -267,7 +546,7 @@ def download_file(file_id: str):
                     if "__" in name:
                         name = name.split("__", 1)[1]
                     media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
-                    headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{name}"}
+                    headers = _build_download_headers(name)
                     return Response(content=content, media_type=media_type, headers=headers)
                 except Exception as e:
                     raise HTTPException(status_code=404, detail=f"对象存储文件不存在: {e}")
@@ -278,7 +557,8 @@ def download_file(file_id: str):
         raise HTTPException(status_code=404, detail="原始文件不存在")
 
     name = candidate.name.split("__", 1)[1] if "__" in candidate.name else candidate.name
-    return FileResponse(path=str(candidate), filename=name)
+    media_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    return FileResponse(path=str(candidate), media_type=media_type, headers=_build_download_headers(name))
 
 
 @router.get("/files/legacy/download")
@@ -312,7 +592,7 @@ def download_legacy_file(name: str, source: str = ""):
             if "__" in download_name:
                 download_name = download_name.split("__", 1)[1]
             media_type = mimetypes.guess_type(download_name)[0] or "application/octet-stream"
-            headers = {"Content-Disposition": f"attachment; filename*=UTF-8''{download_name}"}
+            headers = _build_download_headers(download_name)
             return Response(content=content, media_type=media_type, headers=headers)
         except Exception:
             pass
@@ -326,7 +606,8 @@ def download_legacy_file(name: str, source: str = ""):
     if "__" in download_name:
         download_name = download_name.split("__", 1)[1]
 
-    return FileResponse(path=candidate, filename=download_name)
+    media_type = mimetypes.guess_type(download_name)[0] or "application/octet-stream"
+    return FileResponse(path=candidate, media_type=media_type, headers=_build_download_headers(download_name))
 
 
 @router.delete("/files/{file_id}")
@@ -365,6 +646,11 @@ def delete_file(file_id: str):
                     removed_files += 1
                 except Exception:
                     pass
+
+    try:
+        _refresh_document_manifest(storage.backend)
+    except Exception as exc:
+        logger.warning("删除后刷新文档清单失败: %s", exc)
 
     return {
         "file_id": file_id,

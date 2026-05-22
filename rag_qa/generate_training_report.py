@@ -17,9 +17,9 @@ class TrainingReportGenerator:
         self.report_data = {}
         self.label_map = {
             "直接检索": 0,
-            "假设问题检索": 1,
-            "子查询检索": 2,
-            "场景重构检索": 3
+            "查询扩展检索": 1,
+            "查询分解检索": 2,
+            "问题重写检索": 3
         }
         self.id_to_label = {v: k for k, v in self.label_map.items()}
     

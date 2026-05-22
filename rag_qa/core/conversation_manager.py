@@ -26,6 +26,8 @@ from base import logger
 
 class ConversationManager:
     """会话管理器类"""
+
+    _DONE_STATUSES = {"done", "completed", "success"}
     
     def __init__(self, storage_dir: str = "conversations"):
         """
@@ -247,8 +249,80 @@ class ConversationManager:
         
         logger.debug(f"添加消息到会话 {self.current_session_id} (历史总数：{history_len})")
         return True
+
+    def add_pending_message(self, question: str, metadata: Optional[Dict] = None) -> int:
+        """先落一条 pending 记录，后续再补写回答。"""
+        if not self.current_session_id:
+            logger.warning("没有活动的会话，无法添加待完成消息")
+            return -1
+
+        history = self.current_session_data.setdefault("history", [])
+        history.append({
+            "question": question,
+            "answer": "",
+            "timestamp": datetime.now().isoformat(),
+            "metadata": metadata or {},
+            "status": "pending",
+        })
+        self.save_current_session()
+
+        history_index = len(history) - 1
+        logger.debug(f"添加待完成消息到会话 {self.current_session_id} (索引：{history_index})")
+        return history_index
+
+    def update_message(
+        self,
+        history_index: int,
+        *,
+        answer: Optional[str] = None,
+        metadata: Optional[Dict] = None,
+        status: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> bool:
+        """更新一条历史记录，供 pending -> done/interrupted 场景复用。"""
+        if not self.current_session_id:
+            logger.warning("没有活动的会话，无法更新消息")
+            return False
+
+        history = self.current_session_data.get("history", [])
+        if history_index < 0 or history_index >= len(history):
+            logger.warning(f"历史索引越界，无法更新消息: {history_index}")
+            return False
+
+        message = history[history_index]
+        if not isinstance(message, dict):
+            logger.warning(f"历史记录格式异常，无法更新消息: {history_index}")
+            return False
+
+        if answer is not None:
+            message["answer"] = answer
+
+        current_metadata = message.get("metadata", {}) if isinstance(message.get("metadata", {}), dict) else {}
+        if metadata:
+            current_metadata.update(metadata)
+        message["metadata"] = current_metadata
+
+        if status:
+            message["status"] = status
+            if status in self._DONE_STATUSES:
+                message["completed_at"] = datetime.now().isoformat()
+
+        if error_message is not None:
+            if error_message:
+                message["error_message"] = error_message
+            else:
+                message.pop("error_message", None)
+
+        message["updated_at"] = datetime.now().isoformat()
+        return self.save_current_session()
+
+    def _is_completed_record(self, record: Dict[str, Any]) -> bool:
+        status = str(record.get("status") or "done").lower()
+        if status not in self._DONE_STATUSES:
+            return False
+        return bool(str(record.get("answer", "") or "").strip())
     
-    def get_history(self, limit: int = 5) -> List[Dict]:
+    def get_history(self, limit: int = 5, include_pending: bool = False) -> List[Dict]:
         """
         获取最近的历史记录
         
@@ -263,6 +337,8 @@ class ConversationManager:
             return []
         
         history = self.current_session_data.get("history", [])
+        if not include_pending:
+            history = [record for record in history if isinstance(record, dict) and self._is_completed_record(record)]
         recent_history = history[-limit:] if limit > 0 else history
         
         logger.debug(f"获取最近 {len(recent_history)} 条历史记录")

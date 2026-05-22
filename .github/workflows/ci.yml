@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - engineering/**
+  pull_request:
+
+jobs:
+  frontend-quality:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rag_qa/web/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: rag_qa/web/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  backend-quick-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Compile check
+        run: |
+          python - <<'PY'
+          import compileall
+          import sys
+
+          targets = [
+              'rag_qa/base',
+              'rag_qa/core',
+              'rag_qa/edu_document_loaders',
+              'rag_qa/edu_text_spliter',
+              'rag_qa/web/backend',
+          ]
+
+          ok = True
+          for target in targets:
+              ok = compileall.compile_dir(target, quiet=1, force=False) and ok
+
+          if not ok:
+              sys.exit(1)
+          PY
+
+      - name: Smoke test
+        run: python rag_qa/tests/test_smoke.py

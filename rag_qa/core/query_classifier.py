@@ -18,19 +18,56 @@ from base import logger
 # 导入numpy
 import numpy as np
 # 导入 Transformers 库
-from transformers import BertTokenizer, BertForSequenceClassification
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 from transformers import Trainer, TrainingArguments
 # 导入train_test_split
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 
+
+QUERY_CLASSIFIER_MODEL_DIRS = (
+    "macbert_query_classifier_v2",
+    "bert_query_classifier_new",
+)
+
+QUERY_CLASSIFIER_BACKBONES = (
+    ("MacBERT-base-chinese", os.path.join(rag_qa_path, 'models', 'chinese-macbert-base')),
+    ("BERT-base-chinese", os.path.join(rag_qa_path, 'models', 'bert-base-chinese')),
+)
+
+
+def is_valid_hf_model_dir(path):
+    return bool(path) and os.path.isdir(path) and os.path.exists(os.path.join(path, 'config.json'))
+
+
+def resolve_query_classifier_model_path():
+    for model_dir in QUERY_CLASSIFIER_MODEL_DIRS:
+        candidate = os.path.join(rag_qa_path, model_dir)
+        if is_valid_hf_model_dir(candidate):
+            return candidate
+    return os.path.join(rag_qa_path, QUERY_CLASSIFIER_MODEL_DIRS[0])
+
+
+def resolve_query_classifier_backbone(preferred_path=None):
+    if is_valid_hf_model_dir(preferred_path):
+        return os.path.basename(preferred_path), preferred_path
+
+    for backbone_name, backbone_path in QUERY_CLASSIFIER_BACKBONES:
+        if is_valid_hf_model_dir(backbone_path):
+            return backbone_name, backbone_path
+
+    missing = ", ".join(path for _, path in QUERY_CLASSIFIER_BACKBONES)
+    raise FileNotFoundError(f"查询分类器基础模型不存在，请先下载其一：{missing}")
+
 class QueryClassifier:
-    def __init__(self, model_path="bert_query_classifier_new"):
+    def __init__(self, model_path=None, base_model_path=None):
         # 初始化模型路径（使用通用/专业二分类模型）
-        self.model_path = model_path
-        # 加载 BERT 分词器
-        bert_path = os.path.join(rag_qa_path, 'models', 'bert-base-chinese')
-        self.tokenizer = BertTokenizer.from_pretrained(bert_path)
+        self.model_path = model_path or resolve_query_classifier_model_path()
+        if not os.path.isabs(self.model_path):
+            self.model_path = os.path.join(rag_qa_path, self.model_path)
+        self.backbone_name, self.base_model_path = resolve_query_classifier_backbone(base_model_path)
+        self.status_name = os.path.basename(self.model_path)
+        self.tokenizer = None
         # 初始化模型
         self.model = None
         # 确定设备（GPU 或 CPU）
@@ -49,9 +86,10 @@ class QueryClassifier:
 
     def load_model(self):
         # 检查模型路径是否存在
-        if os.path.exists(self.model_path):
+        if is_valid_hf_model_dir(self.model_path):
             # 加载预训练模型
-            self.model = BertForSequenceClassification.from_pretrained(self.model_path)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
             # 将模型移到指定设备
             self.model.to(self.device)
             
@@ -69,20 +107,16 @@ class QueryClassifier:
             self.id_to_label = {v: k for k, v in self.label_map.items()}
             
             # 记录加载成功的日志
-            logger.info(f"加载模型：{self.model_path}")
+            logger.info(f"加载模型：{self.model_path} (tokenizer/model source: trained checkpoint)")
         else:
-            # 初始化新模型 - 使用绝对路径
-            model_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models', 'bert-base-chinese')
-            logger.info(f"尝试加载基础模型：{model_dir}")
-            if not os.path.exists(model_dir):
-                logger.error(f"基础模型不存在：{model_dir}")
-                raise FileNotFoundError(f"基础模型不存在：{model_dir}")
-            self.model = BertForSequenceClassification.from_pretrained(model_dir, num_labels=2)
-            # print(f'self.model--》{self.model}')
+            # 初始化新模型 - 优先 MacBERT，如不存在则回退本地 BERT
+            logger.info(f"尝试加载基础模型：{self.base_model_path}")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_path)
+            self.model = AutoModelForSequenceClassification.from_pretrained(self.base_model_path, num_labels=2)
             # 将模型移到指定设备
             self.model.to(self.device)
             # 记录初始化模型的日志
-            logger.info("初始化新 BERT 模型")
+            logger.info(f"初始化新查询分类模型，backbone={self.backbone_name}")
             self.id_to_label = {v: k for k, v in self.label_map.items()}
 
     def save_model(self):
@@ -247,38 +281,38 @@ class QueryClassifier:
         logger.info("混淆矩阵:")
         logger.info(confusion_matrix(true_labels, pred_labels))
 
-    def predict_category(self, query):
+    def predict_category(self, query, return_proba: bool = False):
         """
         预测查询类别
-        返回："通用知识" 或 "专业咨询"
+        return_proba=True 时返回 (label, prob_of_label)；否则只返回 label。
+        默认行为不变，向后兼容。
         """
         # 检查模型是否加载
         if self.model is None:
-            # 模型未加载，记录错误
             logger.error("模型未训练或加载")
-            # 默认回退为通用知识
-            return "通用知识"
-        
+            return ("通用知识", 0.0) if return_proba else "通用知识"
+
         # 对查询进行编码
         encoding = self.tokenizer(
-            query, 
-            truncation=True, 
-            padding=True, 
-            max_length=128, 
+            query,
+            truncation=True,
+            padding=True,
+            max_length=128,
             return_tensors="pt"
         )
-        # 将编码移到指定设备
         encoding = {k: v.to(self.device) for k, v in encoding.items()}
-        # 不计算梯度，进行预测
         with torch.no_grad():
-            # 获取模型输出
             outputs = self.model(**encoding)
-            # 获取预测结果
-            prediction = torch.argmax(outputs.logits, dim=1).item()
-        
-        # 根据预测结果返回查询类别
+            probs = torch.softmax(outputs.logits, dim=1)[0]
+            prediction = int(torch.argmax(probs).item())
+            prob = float(probs[prediction].item())
+
         query_type = self.id_to_label.get(prediction, "通用知识")
-        logger.debug(f"查询 '{query}' 预测为 '{query_type}' (ID: {prediction})")
+        logger.debug(
+            f"查询 '{query}' 预测为 '{query_type}' (ID: {prediction}, p={prob:.3f})"
+        )
+        if return_proba:
+            return query_type, prob
         return query_type
 if __name__ == '__main__':
     query_classify = QueryClassifier()

@@ -3,10 +3,18 @@ import ast
 import configparser
 import os
 
+from dotenv import load_dotenv
+
 current_file_path = os.path.abspath(__file__)
 current_dir_path = os.path.dirname(current_file_path)
 project_root = os.path.dirname(current_dir_path)
+workspace_root = os.path.dirname(project_root)
 config_file_path = os.path.join(project_root, 'config.ini')
+PRIMARY_ENV_PREFIX = 'MINING_QA_'
+LEGACY_ENV_PREFIX = 'EDURAG_'
+
+load_dotenv(os.path.join(workspace_root, '.env'), override=False)
+load_dotenv(os.path.join(project_root, '.env'), override=False)
 
 
 class Config:
@@ -38,6 +46,44 @@ class Config:
             'dashscope_base_url',
             'https://dashscope.aliyuncs.com/compatible-mode/v1',
         )
+        raw_general_llm_model = self._get_preferred_str(
+            env_names=['EDURAG_GENERAL_LLM_MODEL'],
+            config_options=[('llm', 'general_llm_model')],
+            fallback='',
+        )
+        raw_general_api_key = self._get_preferred_str(
+            env_names=['EDURAG_GENERAL_API_KEY'],
+            config_options=[('llm', 'general_api_key')],
+            fallback='',
+        )
+        raw_general_base_url = self._get_preferred_str(
+            env_names=['EDURAG_GENERAL_BASE_URL'],
+            config_options=[('llm', 'general_base_url')],
+            fallback='',
+        )
+        raw_compare_llm_model = self._get_preferred_str(
+            env_names=['EDURAG_COMPARE_LLM_MODEL'],
+            config_options=[('llm', 'compare_llm_model')],
+            fallback='auto',
+        )
+        raw_compare_api_key = self._get_preferred_str(
+            env_names=['EDURAG_COMPARE_API_KEY'],
+            config_options=[('llm', 'compare_api_key')],
+            fallback='',
+        )
+        raw_compare_base_url = self._get_preferred_str(
+            env_names=['EDURAG_COMPARE_BASE_URL'],
+            config_options=[('llm', 'compare_base_url')],
+            fallback='',
+        )
+
+        self.GENERAL_LLM_MODEL = raw_general_llm_model or raw_compare_llm_model or self.LLM_MODEL
+        self.GENERAL_API_KEY = raw_general_api_key or raw_compare_api_key or self.DASHSCOPE_API_KEY
+        self.GENERAL_BASE_URL = raw_general_base_url or raw_compare_base_url or self.DASHSCOPE_BASE_URL
+
+        self.COMPARE_LLM_MODEL = raw_compare_llm_model or raw_general_llm_model or 'auto'
+        self.COMPARE_API_KEY = raw_compare_api_key or raw_general_api_key or self.DASHSCOPE_API_KEY
+        self.COMPARE_BASE_URL = raw_compare_base_url or raw_general_base_url or self.DASHSCOPE_BASE_URL
         self.DEEPSEEK_API_KEY = self._get_str('EDURAG_DEEPSEEK_API_KEY', 'llm', 'deepseek_api_key', 'demo-key-change-me')
         self.DEEPSEEK_BASE_URL = self._get_str('EDURAG_DEEPSEEK_BASE_URL', 'llm', 'deepseek_base_url', 'https://api.deepseek.com/v1')
 
@@ -143,6 +189,19 @@ class Config:
         self.CUSTOMER_SERVICE_PHONE = self._get_str('EDURAG_CUSTOMER_SERVICE_PHONE', 'app', 'customer_service_phone', '400-000-0000')
         self.VALID_SOURCES = self._get_list('EDURAG_VALID_SOURCES', 'app', 'valid_sources', ['mining'])
         self.LOG_FILE = self._get_str('EDURAG_LOG_FILE', 'logger', 'log_file', 'logs/app.log')
+        self.LOG_STRUCTURED = self._get_bool('EDURAG_LOG_STRUCTURED', 'logger', 'structured', True)
+        self.LOG_ALERT_ERROR_THRESHOLD = self._get_int(
+            'EDURAG_LOG_ALERT_ERROR_THRESHOLD',
+            'logger',
+            'alert_error_threshold',
+            20,
+        )
+        self.LOG_ALERT_WINDOW_SEC = self._get_int(
+            'EDURAG_LOG_ALERT_WINDOW_SEC',
+            'logger',
+            'alert_window_sec',
+            300,
+        )
 
         self.JWT_SECRET = self._get_str('EDURAG_JWT_SECRET', 'auth', 'jwt_secret', 'demo-jwt-secret-change-me')
         self.DEFAULT_SUPERVISOR_PASSWORD = self._get_str(
@@ -165,9 +224,36 @@ class Config:
         self.MINIO_BUCKET = self._get_str('EDURAG_MINIO_BUCKET', 'storage', 'minio_bucket', 'edurag-knowledge')
         self.MINIO_SECURE = self._get_bool('EDURAG_MINIO_SECURE', 'storage', 'minio_secure', False)
 
+    def _iter_env_values(self, env_name):
+        names = []
+        if isinstance(env_name, (list, tuple)):
+            for item in env_name:
+                names.extend(self._expand_env_aliases(item))
+        else:
+            names.extend(self._expand_env_aliases(env_name))
+
+        seen = set()
+        for name in names:
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            value = os.getenv(name)
+            if value is not None and value != '':
+                yield value
+
+    def _expand_env_aliases(self, env_name):
+        if not env_name:
+            return []
+        if env_name.startswith(PRIMARY_ENV_PREFIX):
+            suffix = env_name[len(PRIMARY_ENV_PREFIX):]
+            return [env_name, f'{LEGACY_ENV_PREFIX}{suffix}']
+        if env_name.startswith(LEGACY_ENV_PREFIX):
+            suffix = env_name[len(LEGACY_ENV_PREFIX):]
+            return [f'{PRIMARY_ENV_PREFIX}{suffix}', env_name]
+        return [env_name]
+
     def _get_str(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        if value is not None and value != '':
+        for value in self._iter_env_values(env_name):
             return value
         try:
             if not self.config.has_section(section):
@@ -176,9 +262,24 @@ class Config:
         except Exception:
             return fallback
 
+    def _get_preferred_str(self, env_names, config_options, fallback):
+        for env_name in env_names:
+            for value in self._iter_env_values(env_name):
+                return value
+
+        for section, option in config_options:
+            try:
+                if self.config.has_section(section):
+                    value = self.config.get(section, option, fallback='')
+                    if value:
+                        return value
+            except Exception:
+                continue
+
+        return fallback
+
     def _get_int(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        if value is not None and value != '':
+        for value in self._iter_env_values(env_name):
             try:
                 return int(value)
             except ValueError:
@@ -191,8 +292,7 @@ class Config:
             return fallback
 
     def _get_bool(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        if value is not None and value != '':
+        for value in self._iter_env_values(env_name):
             return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
         try:
             if not self.config.has_section(section):
@@ -202,8 +302,7 @@ class Config:
             return fallback
 
     def _get_float(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        if value is not None and value != '':
+        for value in self._iter_env_values(env_name):
             try:
                 return float(value)
             except ValueError:
@@ -216,8 +315,10 @@ class Config:
             return fallback
 
     def _get_mapping(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        raw = value
+        raw = None
+        for value in self._iter_env_values(env_name):
+            raw = value
+            break
         if raw is None or raw == '':
             try:
                 if not self.config.has_section(section):
@@ -249,8 +350,7 @@ class Config:
         return mapping or fallback
 
     def _get_list(self, env_name, section, option, fallback):
-        value = os.getenv(env_name)
-        if value:
+        for value in self._iter_env_values(env_name):
             return [item.strip() for item in value.split(',') if item.strip()]
 
         try:

@@ -22,7 +22,7 @@ from prompts import RAGPrompts
 #   导入 time 模块，用于计算时间
 import time
 from base import logger, Config
-from query_classifier import QueryClassifier  # 导入查询分类器
+from query_classifier import QueryClassifier, resolve_query_classifier_model_path  # 导入查询分类器
 from strategy_selector import StrategySelector  # 导入策略选择器
 from vector_store import VectorStore  # 导入向量数据库对象
 from conversation_manager import ConversationManager, get_conversation_manager  # 导入会话管理器
@@ -41,7 +41,7 @@ class RAGSystem:
         #   获取 RAG 提示模板
         self.rag_prompt = RAGPrompts.rag_prompt()
         #   初始化查询分类器（使用二分类模型：通用知识 vs 专业咨询）
-        classifier_path = os.path.join(rag_qa_path, 'bert_query_classifier_new')
+        classifier_path = resolve_query_classifier_model_path()
         self.query_classifier = QueryClassifier(model_path=classifier_path)
         #   初始化策略选择器
         self.strategy_selector = StrategySelector()
@@ -143,29 +143,34 @@ class RAGSystem:
         if not strategy:
             strategy = self.strategy_selector.select_strategy(query)
 
-        # 兼容历史命名，统一到“场景重构检索”
+        # 统一到训练侧四分类标签：直接检索 / 查询扩展检索 / 查询分解检索 / 问题重写检索
+        # 同时兼容历史命名，避免刷新后后向不兼容
         normalized_strategy = {
-            "回溯问题检索": "场景重构检索",
+            "假设问题检索": "查询扩展检索",
+            "HyDE":         "查询扩展检索",
+            "子查询检索":   "查询分解检索",
+            "场景重构检索": "问题重写检索",
+            "回溯问题检索": "问题重写检索",
         }.get(strategy, strategy)
 
         resolved_k = retrieval_k if retrieval_k is not None else conf.RETRIEVAL_K
         resolved_m = candidate_m if candidate_m is not None else conf.CANDIDATE_M
 
-        # 根据检索策略选择不同的检索方式
+        # 根据检索策略选择不同的检索方式（实现上：查询扩展走 HyDE 假设答案；
+        # 查询分解走 子查询拆解；问题重写走 场景重构/重写为标准问题后检索）
         ranked_chunks = []  # 初始化
-        if normalized_strategy == "场景重构检索":
+        if normalized_strategy == "问题重写检索":
             ranked_chunks = self._retrieve_with_scene_reconstruction(query, source_filter, resolved_k)
-        elif normalized_strategy == '子查询检索':
+        elif normalized_strategy == "查询分解检索":
             ranked_chunks = self._retrieve_with_subqueries(query, source_filter, resolved_m)
-        elif normalized_strategy == "假设问题检索":
+        elif normalized_strategy == "查询扩展检索":
             ranked_chunks = self._retrieve_with_hyde(query, source_filter, resolved_k)
         else:
-            # 直接检索：
+            # 直接检索（包括未知/默认策略）
             logger.info(f"使用直接检索策略 (查询: '{query}')")
             ranked_chunks = self.vector_store.hybrid_search_with_rerank(
                 query, k=resolved_k, source_filter=source_filter
-            )  # 注意 hybrid_search_with_rerank 返回的是 rerank 后的父文档
-            # print(f'ranked_chunks--》{ranked_chunks}')
+            )
 
         logger.info(f"策略 '{normalized_strategy}' 检索到 {len(ranked_chunks)} 个候选文档 (可能已是父文档)")
         final_context_docs = ranked_chunks[:resolved_m]

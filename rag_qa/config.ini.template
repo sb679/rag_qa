@@ -4,25 +4,6 @@
 
 ## 配置项说明
 
-### MySQL 数据库配置
-```ini
-[mysql]
-host = localhost          # MySQL 主机地址
-port = 3306               # MySQL 端口
-user = root               # MySQL 用户名
-password = YOUR_PASSWORD  # MySQL 密码（请填写您的实际密码）
-database = subjects_kg    # 数据库名称
-```
-
-### Redis 配置
-```ini
-[redis]
-host = localhost          # Redis 主机地址
-port = 6379               # Redis 端口
-password = YOUR_PASSWORD  # Redis 密码（请填写您的实际密码）
-db = 0                    # Redis 数据库编号
-```
-
 ### Milvus 向量数据库配置
 ```ini
 [milvus]
@@ -38,6 +19,9 @@ collection_name = edurag_final # 集合名称
 model = qwen-plus                        # 模型名称
 dashscope_api_key = demo-key-change-me   # DashScope API Key（推荐通过环境变量 EDURAG_DASHSCOPE_API_KEY 注入）
 dashscope_base_url = https://dashscope.aliyuncs.com/compatible-mode/v1
+compare_llm_model = auto                 # 对比答案模型；auto 表示自动探测可用文本模型
+compare_api_key = demo-key-change-me     # 对比答案 API Key（推荐通过环境变量 EDURAG_COMPARE_API_KEY 注入）
+compare_base_url = https://example-openai-compatible-provider/v1
 
 # DeepSeek API 配置
 deepseek_api_key = demo-key-change-me    # DeepSeek API Key（推荐通过环境变量 EDURAG_DEEPSEEK_API_KEY 注入）
@@ -88,6 +72,9 @@ dedoc_fallback_enable = true
 ```ini
 [logger]
 log_file = logs/app.log   # 日志文件路径
+structured = true
+alert_error_threshold = 20
+alert_window_sec = 300
 ```
 
 ### 应用配置
@@ -109,6 +96,57 @@ minio_access_key = minioadmin
 minio_secret_key = minioadmin
 minio_bucket = edurag-knowledge
 minio_secure = false
+
+[wechat_collector]
+# 公众号采集配置（支持按公众号维度单独频率）
+source_file = samples/wechat_accounts.sample.json
+output_dir = data/wechat_collector/wechat_data
+state_file = data/wechat_collector/collector_state.json
+request_timeout_sec = 25
+default_frequency_days = 30
+max_articles_per_account = 500
+enable_ocr = true
+
+# 质量阈值
+body_pass_threshold = 0.90
+ocr_pass_threshold = 0.80
+ocr_min_chars_for_index = 8
+image_min_side_for_index = 180
+
+# OCR 引擎：auto / paddle / rapid
+ocr_engine = auto
+paddle_ocr_enable = true
+
+# 疑难图片调用 API 识别（默认关闭以节省成本）
+enable_image_api_fallback = false
+image_api_min_ocr_chars = 4
+image_api_model = qwen-vl-max-latest
+image_api_max_calls_per_article = 30
+image_api_call_interval_sec = 0.35
+image_index_heuristic_threshold = 3
+image_high_recall_enable = true
+image_enrich_indexable_summary = true
+
+# 页面质量守卫：命中风控页时自动重试，并避免覆盖历史正常结果
+page_quality_guard_enable = true
+page_guard_max_refetch = 2
+page_guard_min_body_chars = 120
+page_guard_retry_min_wait_sec = 8
+page_guard_retry_max_wait_sec = 18
+
+# 文本结构化（建议开启）
+text_struct_enable = true
+text_struct_model = qwen-plus
+text_struct_max_chars = 6000
+
+# API 超时
+api_timeout_sec = 45
+
+# 视频人工标注模板
+video_manual_template_enable = true
+
+# 请求标识
+user_agent = Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36
 ```
 
 ## 获取 API Key

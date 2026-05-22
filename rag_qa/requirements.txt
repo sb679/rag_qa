@@ -142,6 +142,7 @@ pydantic_core==2.33.1
 pydub==0.25.1
 pyemd==1.0.0
 Pygments==2.19.1
+prometheus-client==0.22.1
 pymilvus==2.5.4
 PyMuPDF==1.25.5
 PyMySQL==1.1.1
@@ -149,6 +150,7 @@ pyparsing==3.3.2
 pypdf==5.4.0
 pyreadline3==3.5.4
 pytextrank==3.3.0
+pywinauto==0.6.9
 python-dateutil==2.9.0.post0
 python-docx==1.1.2
 python-dotenv==1.0.1
@@ -159,6 +161,7 @@ python-oxmsg==0.0.2
 python-pptx==1.0.2
 pytz==2025.1
 PyYAML==6.0.2
+ragas==0.2.15
 rank-bm25==0.2.2
 RapidFuzz==3.13.0
 rapidocr-onnxruntime==1.4.4

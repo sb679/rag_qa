@@ -3,6 +3,10 @@
 import logging
 import os
 import re
+import json
+import time
+import threading
+from datetime import datetime, timezone
 
 from .config import Config
 # 获取当前文件的绝对路径
@@ -42,6 +46,55 @@ class SensitiveDataFilter(logging.Filter):
         return True
 
 
+class JsonFormatter(logging.Formatter):
+    """Structured JSON formatter for machine-friendly logs."""
+
+    def format(self, record):
+        payload = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "logger": record.name,
+            "level": record.levelname,
+            "message": record.getMessage(),
+        }
+        if hasattr(record, "event") and record.event:
+            payload["event"] = record.event
+        if hasattr(record, "request_id") and record.request_id:
+            payload["request_id"] = record.request_id
+        if hasattr(record, "fields") and isinstance(record.fields, dict):
+            payload.update(record.fields)
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
+class ErrorAlertMonitor:
+    """Simple in-process alerting when 5xx error rate spikes."""
+
+    def __init__(self, threshold: int = 20, window_sec: int = 300):
+        self.threshold = max(1, int(threshold or 1))
+        self.window_sec = max(30, int(window_sec or 30))
+        self._events = []
+        self._last_alert_ts = 0.0
+        self._lock = threading.Lock()
+
+    def record_error(self):
+        now = time.time()
+        with self._lock:
+            cutoff = now - self.window_sec
+            self._events = [ts for ts in self._events if ts >= cutoff]
+            self._events.append(now)
+
+            # Avoid duplicate alert storms: at most one alert per window.
+            if len(self._events) >= self.threshold and (now - self._last_alert_ts) >= self.window_sec:
+                self._last_alert_ts = now
+                return {
+                    "error_count": len(self._events),
+                    "window_sec": self.window_sec,
+                    "threshold": self.threshold,
+                }
+        return None
+
+
 def setup_logging(log_file=log_file_path):
     # 创建日志目录
     os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -52,6 +105,7 @@ def setup_logging(log_file=log_file_path):
     # print(f'logger.handlers-->{logger.handlers}')
     # 避免重复添加处理器
     if not logger.handlers:
+        conf = Config()
         # 创建文件处理器
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         # 设置文件处理器级别
@@ -61,7 +115,10 @@ def setup_logging(log_file=log_file_path):
         # 设置控制台处理器级别
         console_handler.setLevel(logging.INFO)
         # 设置日志格式
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        if conf.LOG_STRUCTURED:
+            formatter = JsonFormatter()
+        else:
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         # 为文件处理器设置格式
         file_handler.setFormatter(formatter)
         # 为控制台处理器设置格式
@@ -73,6 +130,13 @@ def setup_logging(log_file=log_file_path):
         logger.addFilter(SensitiveDataFilter())
     # 返回日志器
     return logger
+
+
+def log_event(level: str, event: str, **fields):
+    """Helper for consistent structured log events."""
+    level_name = (level or "info").lower()
+    log_func = getattr(logger, level_name, logger.info)
+    log_func(event, extra={"event": event, "fields": fields})
 
 # 初始化日志器
 logger = setup_logging()

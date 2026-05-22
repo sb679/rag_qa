@@ -7,7 +7,7 @@ if _backend_dir not in sys.path:
     sys.path.insert(0, _backend_dir)
 
 from fastapi import APIRouter
-import rag_service
+from rag_runtime import rag_service
 
 router = APIRouter()
 

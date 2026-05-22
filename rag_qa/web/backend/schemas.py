@@ -8,6 +8,11 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     source_filter: Optional[str] = None
     include_source_details: bool = True
+    enable_compare: bool = False
+
+
+class CompareRequest(BaseModel):
+    query: str
 
 
 class SourceDocument(BaseModel):

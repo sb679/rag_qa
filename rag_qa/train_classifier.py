@@ -1,59 +1,64 @@
 # -*- coding:utf-8 -*-
 """
-训练 BERT 查询分类模型
-使用生成的训练数据集进行微调
+训练查询分类模型。
+默认使用 MacBERT 基座与 v2 二分类数据集进行微调。
 """
 import os
 import sys
+import json
+from collections import Counter
 
 # 获取当前文件所在目录的绝对路径
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
 from core.query_classifier import QueryClassifier
+from demo_experiment_paths import QUERY_CLASSIFIER_EXPERIMENT_DIR
 from base import logger
+
+
+DEFAULT_MODEL_DIR = str(QUERY_CLASSIFIER_EXPERIMENT_DIR / 'model_snapshot')
+DEFAULT_BACKBONE_DIR = os.path.join(current_dir, 'models', 'chinese-macbert-base')
 
 def train_model():
     """训练查询分类模型"""
     print("=" * 60)
-    print("开始训练 BERT 查询分类模型")
+    print("开始训练查询分类模型（默认 MacBERT）")
     print("=" * 60)
     
     # 检查训练数据文件是否存在
-    data_file = os.path.join(current_dir, 'classify_data', 'training_dataset_mining_5000.json')
+    data_file = str(QUERY_CLASSIFIER_EXPERIMENT_DIR / 'artifacts' / 'query_classifier_dataset_v2.jsonl')
     
     if not os.path.exists(data_file):
         print(f"❌ 错误：训练数据文件不存在：{data_file}")
-        print("请先运行 generate_training_data.py 生成训练数据")
+        print("请先运行 build_query_classifier_dataset_v2.py 生成训练数据")
         return False
     
     print(f"\n✓ 找到训练数据文件：{data_file}")
     
     # 统计训练数据
     with open(data_file, 'r', encoding='utf-8') as f:
-        lines = f.readlines()
-        total_samples = len(lines)
-        
-        # 统计类别分布
-        professional_count = 0
-        general_count = 0
-        for line in lines[:100]:  # 只检查前 100 条作为样本
-            import json
-            data = json.loads(line)
-            if data['label'] == '专业咨询':
-                professional_count += 1
-            else:
-                general_count += 1
-        
-        print(f"  总样本数：{total_samples}")
-        print(f"  抽样检查（前 100 条）:")
-        print(f"    专业咨询：{professional_count}")
-        print(f"    通用知识：{general_count}")
+        rows = [json.loads(line) for line in f if line.strip()]
+
+    total_samples = len(rows)
+    label_counts = Counter(row['label'] for row in rows)
+    source_counts = Counter(row.get('source', 'unknown') for row in rows)
+
+    print(f"  总样本数：{total_samples}")
+    print("  全量标签统计：")
+    print(f"    专业咨询：{label_counts.get('专业咨询', 0)}")
+    print(f"    通用知识：{label_counts.get('通用知识', 0)}")
+    if source_counts:
+        print("  来源统计（Top 5）：")
+        for source, count in source_counts.most_common(5):
+            print(f"    {source}: {count}")
     
     # 初始化分类器
-    print("\n正在初始化 BERT 分类器...")
-    classifier = QueryClassifier()
+    print("\n正在初始化查询分类器...")
+    classifier = QueryClassifier(model_path=DEFAULT_MODEL_DIR, base_model_path=DEFAULT_BACKBONE_DIR)
     print("✓ 分类器初始化完成")
+    print(f"  输出模型目录：{classifier.model_path}")
+    print(f"  基础模型：{classifier.backbone_name}")
     
     # 开始训练
     print("\n" + "=" * 60)
@@ -121,7 +126,7 @@ if __name__ == '__main__':
     success = train_model()
     if success:
         print("\n" + "=" * 60)
-        print("训练完成！模型已保存至 bert_query_classifier 目录")
+        print(f"训练完成！模型已保存至 {DEFAULT_MODEL_DIR}")
         print("可以开始使用 RAG 系统进行查询了")
         print("=" * 60)
     else:

@@ -33,6 +33,7 @@ def download_model(model_name, save_path):
 
 if __name__ == "__main__":
     models = [
+        ("hfl/chinese-macbert-base", "models/chinese-macbert-base"),
         ("bert-base-chinese", "models/bert-base-chinese"),
         ("BAAI/bge-m3", "models/bge-m3"),
         ("BAAI/bge-reranker-large", "models/bge-reranker-large"),

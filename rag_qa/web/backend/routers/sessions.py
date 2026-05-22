@@ -8,7 +8,7 @@ if _backend_dir not in sys.path:
 
 from fastapi import APIRouter, HTTPException
 from schemas import NewSessionRequest
-import rag_service
+from rag_runtime import rag_service
 
 router = APIRouter()
 

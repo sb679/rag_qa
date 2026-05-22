@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title>EduRAG Maskable Icon</title>
+  <desc>Maskable app icon for the EduRAG mining safety assistant.</desc>
+  <defs>
+    <linearGradient id="maskBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="58%" stop-color="#0f5bd8"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="164" fill="url(#maskBg)"/>
+  <g transform="translate(92 92)">
+    <rect x="0" y="0" width="328" height="328" rx="96" fill="#ffffff" opacity="0.12"/>
+    <path d="M50 201.5C50 118.4 117.4 51 200.5 51c29.5 0 57 8.5 80.1 23.2l-31.4 43.8c-13.8-8.9-30.2-14-47.8-14-48.3 0-87.5 39.2-87.5 87.5s39.2 87.5 87.5 87.5c28.5 0 53.8-13.6 69.8-34.8h-89.3v-50.6H329c1.6 9 2.4 18.4 2.4 28 0 90.9-73.7 164.6-164.6 164.6S50 292.4 50 201.5z" fill="#f8fafc"/>
+    <circle cx="252" cy="68" r="30" fill="#f59e0b"/>
+    <path d="M62 62l42 42-17 17-42-42z" fill="#f8fafc" opacity="0.84"/>
+  </g>
+</svg>

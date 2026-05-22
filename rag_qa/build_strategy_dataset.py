@@ -2,9 +2,9 @@
 构建检索策略分类训练数据集
 目标：生成包含四种检索策略标签的训练数据
 - 直接检索
-- 假设问题检索 (HyDE)
-- 子查询检索
-- 场景重构检索（新增）
+- 查询扩展检索
+- 查询分解检索
+- 问题重写检索
 """
 
 import json
@@ -26,15 +26,15 @@ class StrategyDatasetBuilder:
                 "keywords": ["是什么", "有哪些", "包括", "定义", "概念", "原理", "特点"],
                 "exclude": ["如何", "怎样", "对比", "区别", "影响", "优化", "设计"]
             },
-            "假设问题检索": {
+            "查询扩展检索": {
                 "keywords": ["影响", "意义", "作用", "趋势", "前景", "关系", "重要性", "价值"],
                 "abstract_concepts": True
             },
-            "子查询检索": {
+            "查询分解检索": {
                 "keywords": ["对比", "区别", "差异", "优劣", "比较", "和", "与", "及"],
                 "multi_topic": True
             },
-            "场景重构检索": {
+            "问题重写检索": {
                 "length_range": (25, 60),
                 "has_numbers": True,
                 "multi_clauses": True,
@@ -58,17 +58,17 @@ class StrategyDatasetBuilder:
         """
         length = len(query)
         
-        # 规则 1: 检查是否包含抽象概念词 → 假设问题检索
+        # 规则 1: 检查是否包含抽象概念词 → 查询扩展检索
         abstract_words = ["影响", "意义", "作用", "趋势", "前景", "关系", "重要性", "价值", "效果"]
         if any(word in query for word in abstract_words):
-            return "假设问题检索"
+            return "查询扩展检索"
         
-        # 规则 2: 检查是否为对比类问题 → 子查询检索
+        # 规则 2: 检查是否为对比类问题 → 查询分解检索
         comparison_words = ["对比", "区别", "差异", "优劣", "比较", "哪个更好", "有何不同"]
         if any(word in query for word in comparison_words):
-            return "子查询检索"
+            return "查询分解检索"
         
-        # 规则 3: 检查是否为复杂工程问题 → 场景重构检索
+        # 规则 3: 检查是否为复杂工程问题 → 问题重写检索
         complex_indicators = [
             length > 25,  # 长度较长
             query.count(",") >= 2,  # 多个分句
@@ -76,7 +76,7 @@ class StrategyDatasetBuilder:
             any(kw in query for kw in ["如何", "怎样", "应该", "方案", "设计", "优化", "解决", "故障", "异常"])
         ]
         if sum(complex_indicators) >= 2:  # 满足 2 个以上条件
-            return "场景重构检索"
+            return "问题重写检索"
         
         # 规则 4: 其余情况 → 直接检索
         return "直接检索"
@@ -124,31 +124,31 @@ class StrategyDatasetBuilder:
     
     def generate_new_complex_queries(self, count: int = 500) -> List[Dict]:
         """
-        生成新的复杂工程问题（场景重构检索专用）
+        生成新的复杂工程问题（问题重写检索专用）
         """
         print(f"\n正在生成 {count} 条新的复杂工程问题...")
         
         # 定义采矿领域的场景模板
         scenarios = [
             # 开采方法选择类
-            ("我有一个埋深{depth}米的{mineral_type}矿床，矿体倾角{angle}度，厚度{thickness}米，围岩稳固性{stability}，应该选择什么开采方法？", "场景重构检索"),
-            ("某{mineral_type}矿矿体埋藏深度达{depth}米，采用露天开采，边坡角{angle}度，如何优化开采参数以确保安全高效？", "场景重构检索"),
+            ("我有一个埋深{depth}米的{mineral_type}矿床，矿体倾角{angle}度，厚度{thickness}米，围岩稳固性{stability}，应该选择什么开采方法？", "问题重写检索"),
+            ("某{mineral_type}矿矿体埋藏深度达{depth}米，采用露天开采，边坡角{angle}度，如何优化开采参数以确保安全高效？", "问题重写检索"),
             
             # 故障诊断类
-            ("选矿厂{process_type}过程中{problem_phenomenon}，同时{related_issue}，从哪些方面排查问题并优化工艺参数？", "场景重构检索"),
-            ("矿山{equipment_type}设备频繁出现故障，{specific_problem}，是设备选型问题还是维护保养不到位？", "场景重构检索"),
+            ("选矿厂{process_type}过程中{problem_phenomenon}，同时{related_issue}，从哪些方面排查问题并优化工艺参数？", "问题重写检索"),
+            ("矿山{equipment_type}设备频繁出现故障，{specific_problem}，是设备选型问题还是维护保养不到位？", "问题重写检索"),
             
             # 方案设计类
-            ("某矿井瓦斯涌出量{gas_rate}m³/min，工作面温度{temperature}℃，如何设计通风系统以确保作业环境安全？", "场景重构检索"),
-            ("尾矿库坝体出现{dam_problem}，浸润线抬高{height}米，怎样进行除险加固以确保安全？", "场景重构检索"),
+            ("某矿井瓦斯涌出量{gas_rate}m³/min，工作面温度{temperature}℃，如何设计通风系统以确保作业环境安全？", "问题重写检索"),
+            ("尾矿库坝体出现{dam_problem}，浸润线抬高{height}米，怎样进行除险加固以确保安全？", "问题重写检索"),
             
             # 工艺优化类
-            ("采用{mining_method}采矿法，但矿石损失率达{loss_rate}%，贫化率{dilution_rate}%，如何改进{improve_aspect}？", "场景重构检索"),
-            ("某铁矿磁性铁回收率只有{recovery_rate}%，远低于设计指标，{process_link}环节存在什么问题？", "场景重构检索"),
+            ("采用{mining_method}采矿法，但矿石损失率达{loss_rate}%，贫化率{dilution_rate}%，如何改进{improve_aspect}？", "问题重写检索"),
+            ("某铁矿磁性铁回收率只有{recovery_rate}%，远低于设计指标，{process_link}环节存在什么问题？", "问题重写检索"),
             
             # 多因素综合类
-            ("露天矿境界优化时如何平衡剥采比、资源回收率和边坡稳定性三个相互制约的因素？", "场景重构检索"),
-            ("深部开采面临高地应力、高井温和高渗透压的'三高'问题，综合技术方案应该如何设计？", "场景重构检索"),
+            ("露天矿境界优化时如何平衡剥采比、资源回收率和边坡稳定性三个相互制约的因素？", "问题重写检索"),
+            ("深部开采面临高地应力、高井温和高渗透压的'三高'问题，综合技术方案应该如何设计？", "问题重写检索"),
         ]
         
         # 填充参数
@@ -203,8 +203,8 @@ class StrategyDatasetBuilder:
         """
         print(f"\n正在生成其他策略的训练数据...")
         
-        # 假设问题检索模板
-        hyde_templates = [
+        # 查询扩展检索模板
+        expansion_templates = [
             "采矿工程对环境的影响有哪些？",
             "绿色矿山建设的意义是什么？",
             "智能化开采技术的发展趋势如何？",
@@ -215,8 +215,8 @@ class StrategyDatasetBuilder:
             "矿业权流转制度的意义？",
         ]
         
-        # 子查询检索模板
-        subquery_templates = [
+        # 查询分解检索模板
+        decomposition_templates = [
             "比较露天开采和地下开采的优缺点。",
             "浮选法和磁选法的区别是什么？",
             "充填采矿法与空场采矿法的差异对比。",
@@ -234,9 +234,9 @@ class StrategyDatasetBuilder:
         
         generated_data = []
         
-        # 生成假设问题检索数据（带一些变体）
+        # 生成查询扩展检索数据（带一些变体）
         for i in range(count_per_strategy):
-            base_template = random.choice(hyde_templates)
+            base_template = random.choice(expansion_templates)
             # 添加一些变体
             variations = [
                 base_template,
@@ -248,13 +248,13 @@ class StrategyDatasetBuilder:
             
             generated_data.append({
                 "query": query,
-                "strategy": "假设问题检索",
+                "strategy": "查询扩展检索",
                 "source": "generated"
             })
         
-        # 生成子查询检索数据
+        # 生成查询分解检索数据
         for i in range(count_per_strategy):
-            base_template = random.choice(subquery_templates)
+            base_template = random.choice(decomposition_templates)
             variations = [
                 base_template,
                 "请分析" + base_template,
@@ -264,7 +264,7 @@ class StrategyDatasetBuilder:
             
             generated_data.append({
                 "query": query,
-                "strategy": "子查询检索",
+                "strategy": "查询分解检索",
                 "source": "generated"
             })
         
@@ -306,7 +306,7 @@ class StrategyDatasetBuilder:
         # 1. 从现有数据转换
         existing_data = self.transform_existing_data(sample_size=4000)
         
-        # 2. 生成新的复杂工程问题（场景重构检索）
+        # 2. 生成新的复杂工程问题（问题重写检索）
         complex_data = self.generate_new_complex_queries(count=1500)
         
         # 3. 生成其他策略的补充数据

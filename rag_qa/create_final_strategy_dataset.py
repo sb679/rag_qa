@@ -2,9 +2,9 @@
 最终版检索策略分类数据集
 目标：构建平衡、高质量的数据集
 - 直接检索：~1000 条
-- 假设问题检索：~800 条
-- 子查询检索：~800 条
-- 场景重构检索：~1200 条
+- 查询扩展检索：~800 条
+- 查询分解检索：~800 条
+- 问题重写检索：~1200 条
 总计：~3800 条
 """
 
@@ -55,9 +55,9 @@ def load_and_process_data():
     return grouped
 
 
-def generate_hyde_queries(target_count=800, existing_count=41):
-    """生成假设问题检索数据"""
-    print(f"\n4. 生成假设问题检索数据 (目标：{target_count}条)...")
+def generate_query_expansion_queries(target_count=800, existing_count=41):
+    """生成查询扩展检索数据"""
+    print(f"\n4. 生成查询扩展检索数据 (目标：{target_count}条)...")
     
     templates = [
         "采矿工程对环境的影响有哪些？",
@@ -95,15 +95,15 @@ def generate_hyde_queries(target_count=800, existing_count=41):
         else:
             query = base + "有什么重要意义？"
         
-        variations.append({"query": query, "strategy": "假设问题检索"})
+        variations.append({"query": query, "strategy": "查询扩展检索"})
     
     print(f"   生成：{len(variations)} 条")
     return variations
 
 
-def generate_subquery_queries(target_count=800, existing_count=26):
-    """生成子查询检索数据"""
-    print(f"\n5. 生成子查询检索数据 (目标：{target_count}条)...")
+def generate_query_decomposition_queries(target_count=800, existing_count=26):
+    """生成查询分解检索数据"""
+    print(f"\n5. 生成查询分解检索数据 (目标：{target_count}条)...")
     
     templates = [
         "比较露天开采和地下开采的优缺点。",
@@ -138,15 +138,15 @@ def generate_subquery_queries(target_count=800, existing_count=26):
         else:
             query = "试比较" + base
         
-        variations.append({"query": query, "strategy": "子查询检索"})
+        variations.append({"query": query, "strategy": "查询分解检索"})
     
     print(f"   生成：{len(variations)} 条")
     return variations
 
 
-def generate_scenario_queries(target_count=1200, existing_count=494):
-    """生成场景重构检索数据"""
-    print(f"\n6. 生成场景重构检索数据 (目标：{target_count}条)...")
+def generate_query_rewrite_queries(target_count=1200, existing_count=494):
+    """生成问题重写检索数据"""
+    print(f"\n6. 生成问题重写检索数据 (目标：{target_count}条)...")
     
     templates = [
         # 参数化工程问题
@@ -221,7 +221,7 @@ def generate_scenario_queries(target_count=1200, existing_count=494):
             while placeholder in query:
                 query = query.replace(placeholder, str(random.choice(values)), 1)
         
-        variations.append({"query": query, "strategy": "场景重构检索"})
+        variations.append({"query": query, "strategy": "问题重写检索"})
     
     print(f"   生成：{len(variations)} 条")
     
@@ -239,9 +239,9 @@ def create_final_dataset():
     grouped = load_and_process_data()
     
     # 2. 生成补充数据
-    hyde_data = generate_hyde_queries(target_count=800, existing_count=len(grouped.get("假设问题检索", [])))
-    subquery_data = generate_subquery_queries(target_count=800, existing_count=len(grouped.get("子查询检索", [])))
-    scenario_data = generate_scenario_queries(target_count=1200, existing_count=len(grouped.get("场景重构检索", [])))
+    expansion_data = generate_query_expansion_queries(target_count=800, existing_count=len(grouped.get("查询扩展检索", [])))
+    decomposition_data = generate_query_decomposition_queries(target_count=800, existing_count=len(grouped.get("查询分解检索", [])))
+    rewrite_data = generate_query_rewrite_queries(target_count=1200, existing_count=len(grouped.get("问题重写检索", [])))
     
     # 3. 合并所有数据
     final_data = []
@@ -251,9 +251,9 @@ def create_final_dataset():
         final_data.extend(items)
     
     # 添加生成的数据
-    final_data.extend(hyde_data)
-    final_data.extend(subquery_data)
-    final_data.extend(scenario_data)
+    final_data.extend(expansion_data)
+    final_data.extend(decomposition_data)
+    final_data.extend(rewrite_data)
     
     # 4. 打乱顺序
     random.shuffle(final_data)
@@ -293,12 +293,12 @@ def create_final_dataset():
     else:
         print(f"  ✓ 无重复查询")
     
-    # 检查场景重构检索质量
-    scenario_queries = [item['query'] for item in final_data if item['strategy'] == '场景重构检索']
-    complex_count = sum(1 for q in scenario_queries 
+    # 检查问题重写检索质量
+    rewrite_queries = [item['query'] for item in final_data if item['strategy'] == '问题重写检索']
+    complex_count = sum(1 for q in rewrite_queries 
                        if any(c.isdigit() for c in q) or q.count(",") >= 2 or len(q) > 25)
-    quality_rate = complex_count / len(scenario_queries) * 100 if scenario_queries else 0
-    print(f"  场景重构检索质量：{complex_count}/{len(scenario_queries)} ({quality_rate:.1f}%)")
+    quality_rate = complex_count / len(rewrite_queries) * 100 if rewrite_queries else 0
+    print(f"  问题重写检索质量：{complex_count}/{len(rewrite_queries)} ({quality_rate:.1f}%)")
     
     if quality_rate >= 80:
         print(f"  ✓ 质量达标！")

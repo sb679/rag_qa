@@ -6,10 +6,19 @@
 
 | 模型名称 | 用途 | 大小 | 来源 |
 |---------|------|------|------|
+| chinese-macbert-base | 查询分类推荐基座 | ~400MB | HuggingFace |
 | bert-base-chinese | BERT 基础模型 | ~400MB | HuggingFace |
 | bge-m3 | 文本嵌入模型 | ~2GB | HuggingFace |
 | bge-reranker-large | 重排序模型 | ~1.2GB | HuggingFace |
 | nlp_bert_document-segmentation_chinese-base | 文档分割模型 | ~400MB | HuggingFace |
+
+## 查询分类器模型说明
+
+- 当前推荐基础模型：`models/chinese-macbert-base`
+- 当前默认查询分类产物：`macbert_query_classifier_v2/`
+- 旧版查询分类产物：`bert_query_classifier_new/`
+- 运行时解析顺序：先尝试 `macbert_query_classifier_v2/`，再回退 `bert_query_classifier_new/`
+- 最新测试集结果：MacBERT 查询分类器 100/100，旧 BERT 查询分类器 70/100
 
 ## 🔧 自动下载脚本
 
@@ -51,6 +60,7 @@ def download_model(model_name, save_path):
 
 if __name__ == "__main__":
     models = [
+        ("hfl/chinese-macbert-base", "models/chinese-macbert-base"),
         ("bert-base-chinese", "models/bert-base-chinese"),
         ("BAAI/bge-m3", "models/bge-m3"),
         ("BAAI/bge-reranker-large", "models/bge-reranker-large"),
@@ -117,7 +127,10 @@ model_dir = snapshot_download('AI-ModelScope/bge-reranker-large',
 下载后解压到项目根目录，确保目录结构如下：
 ```
 rag_qa/
+├── macbert_query_classifier_v2/
+├── bert_query_classifier_new/
 ├── models/
+│   ├── chinese-macbert-base/
 │   ├── bert-base-chinese/
 │   ├── bge-m3/
 │   └── bge-reranker-large/
@@ -143,6 +156,24 @@ try:
     print("✅ BERT 模型加载成功")
 except Exception as e:
     print(f"❌ BERT 模型加载失败: {e}")
+
+# 测试 MacBERT
+try:
+    macbert_model = AutoModel.from_pretrained('models/chinese-macbert-base')
+    macbert_tokenizer = AutoTokenizer.from_pretrained('models/chinese-macbert-base')
+    print("✅ MacBERT 模型加载成功")
+except Exception as e:
+    print(f"❌ MacBERT 模型加载失败: {e}")
+
+# 测试查询分类器产物目录
+for query_model_dir in ['macbert_query_classifier_v2', 'bert_query_classifier_new']:
+    if os.path.isdir(query_model_dir):
+        try:
+            query_model = AutoModel.from_pretrained(query_model_dir)
+            query_tokenizer = AutoTokenizer.from_pretrained(query_model_dir)
+            print(f"✅ 查询分类模型加载成功: {query_model_dir}")
+        except Exception as e:
+            print(f"❌ 查询分类模型加载失败 {query_model_dir}: {e}")
 
 # 测试 BGE-M3
 try:
