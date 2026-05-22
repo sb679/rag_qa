@@ -1,13 +1,13 @@
 <template>
-  <div class="login-shell">
+  <div class="login-shell motion-ready">
     <div class="login-hero">
-      <div class="hero-badge">EduRAG · 采矿安全智能问答系统</div>
-      <h1>让矿山知识检索更快、更稳、更像一个真正的产品</h1>
-      <p>基于 RAG、混合检索与实时反馈闭环，面向矿山安全场景的问答与知识管理平台。</p>
+      <div class="hero-badge">采矿安全智能问答系统</div>
+      <h1>把安全规程、事故场景与作业经验接成一个可追溯的问答系统</h1>
+      <p>面向采矿与冶金安全场景，覆盖规程问答、隐患解释、知识溯源和反馈闭环，不再只是一个泛化聊天页面。</p>
       <div class="hero-stats">
-        <div><strong>Hybrid</strong><span>Dense + Sparse</span></div>
-        <div><strong>Live</strong><span>反馈联动</span></div>
-        <div><strong>Role</strong><span>主管权限控制</span></div>
+        <div><strong>规程问答</strong><span>采矿与冶金安全知识</span></div>
+        <div><strong>知识溯源</strong><span>检索命中与来源可追踪</span></div>
+        <div><strong>反馈闭环</strong><span>主管处理状态联动</span></div>
       </div>
     </div>
 
@@ -16,8 +16,13 @@
         <div class="logo-mark"><el-icon size="28" color="#fff"><ChatDotRound /></el-icon></div>
         <div>
           <h2>登录系统</h2>
-          <p>进入 EduRAG 工作台</p>
+          <p>进入采矿安全智能问答工作台</p>
         </div>
+      </div>
+
+      <div v-if="loginError" class="login-status error">
+        <div class="login-status-title">登录失败</div>
+        <div class="login-status-desc">{{ loginError }}</div>
       </div>
 
       <el-form ref="formRef" :model="form" :rules="rules" @submit.prevent="handleLogin">
@@ -59,7 +64,7 @@
         <p class="demo-hint">演示账号：</p>
         <div class="demo-accounts">
           <span>主管账号：9526 / 9527 / 9528</span>
-          <span>默认演示密码：由 EDURAG_DEFAULT_SUPERVISOR_PASSWORD 配置</span>
+          <span>默认演示密码：由系统环境变量统一配置</span>
         </div>
       </div>
     </div>
@@ -67,9 +72,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { ChatDotRound, User, Lock } from '@element-plus/icons-vue'
 import { authAPI } from '@/api'
 import { useStore } from '@/store'
@@ -78,6 +82,7 @@ const router = useRouter()
 const { setLogin } = useStore()
 const formRef = ref(null)
 const loading = ref(false)
+const loginError = ref('')
 
 const form = ref({
   employeeId: '',
@@ -89,8 +94,18 @@ const rules = {
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
 
+watch(
+  () => [form.value.employeeId, form.value.password],
+  () => {
+    if (loginError.value) {
+      loginError.value = ''
+    }
+  }
+)
+
 async function handleLogin() {
   if (!formRef.value) return
+  loginError.value = ''
   
   try {
     await formRef.value.validate()
@@ -109,11 +124,19 @@ async function handleLogin() {
       nickname,
       avatar,
     })
-    
-    ElMessage.success('登录成功')
+
     router.push('/chat')
   } catch (err) {
-    ElMessage.error(err.response?.data?.detail || '登录失败')
+    const status = err?.response?.status
+    if (status === 401) {
+      loginError.value = '工号或密码不正确，请重新检查后再试。'
+      return
+    }
+    if (status === 404) {
+      loginError.value = '当前无法连接登录服务，请确认前端代理或后端服务是否正常。'
+      return
+    }
+    loginError.value = err?.response?.data?.detail || '登录失败，请稍后重试。'
   } finally {
     loading.value = false
   }
@@ -138,6 +161,24 @@ async function handleLogin() {
   border-radius: 999px;
   filter: blur(20px);
   pointer-events: none;
+  animation: loginOrbFloat 12s ease-in-out infinite alternate;
+}
+
+.login-shell::before {
+  width: 280px;
+  height: 280px;
+  top: 4%;
+  left: 6%;
+  background: rgba(37, 99, 235, 0.16);
+}
+
+.login-shell::after {
+  width: 320px;
+  height: 320px;
+  right: -4%;
+  bottom: 4%;
+  background: rgba(20, 184, 166, 0.16);
+  animation-duration: 15s;
 }
 
 .login-hero {
@@ -145,6 +186,9 @@ async function handleLogin() {
   color: #0f172a;
   padding: 40px 22px 40px 8vw;
   max-width: 820px;
+  opacity: 0;
+  transform: translateY(24px);
+  animation: loginReveal .8s cubic-bezier(.22,1,.36,1) forwards;
 }
 
 .hero-badge {
@@ -153,6 +197,9 @@ async function handleLogin() {
   background: rgba(255,255,255,.7); border: 1px solid rgba(148,163,184,.22);
   color: #1d4ed8; font-weight: 700; font-size: 12px;
   box-shadow: 0 14px 34px rgba(15, 23, 42, .06);
+  opacity: 0;
+  transform: translateY(18px);
+  animation: loginReveal .7s cubic-bezier(.22,1,.36,1) .08s forwards;
 }
 
 .login-hero h1 {
@@ -162,6 +209,9 @@ async function handleLogin() {
   font-weight: 900;
   letter-spacing: -0.04em;
   max-width: 13ch;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: loginReveal .82s cubic-bezier(.22,1,.36,1) .16s forwards;
 }
 
 .login-hero p {
@@ -169,6 +219,9 @@ async function handleLogin() {
   color: #475569;
   font-size: 18px;
   line-height: 1.8;
+  opacity: 0;
+  transform: translateY(20px);
+  animation: loginReveal .82s cubic-bezier(.22,1,.36,1) .24s forwards;
 }
 
 .hero-stats {
@@ -179,7 +232,14 @@ async function handleLogin() {
   min-width: 132px; padding: 14px 16px; border-radius: 16px;
   background: rgba(255,255,255,.76); border: 1px solid rgba(148,163,184,.18);
   box-shadow: var(--edurag-shadow);
+  opacity: 0;
+  transform: translateY(20px) scale(.98);
+  animation: loginReveal .72s cubic-bezier(.22,1,.36,1) forwards;
 }
+
+.hero-stats div:nth-child(1) { animation-delay: .3s; }
+.hero-stats div:nth-child(2) { animation-delay: .38s; }
+.hero-stats div:nth-child(3) { animation-delay: .46s; }
 
 .hero-stats strong { display: block; font-size: 18px; color: #0f172a; }
 .hero-stats span { font-size: 12px; color: #64748b; }
@@ -190,6 +250,9 @@ async function handleLogin() {
   border: 1px solid rgba(148,163,184,.18); border-radius: 26px;
   padding: 34px 32px; box-shadow: var(--edurag-shadow-strong);
   position: relative; z-index: 1;
+  opacity: 0;
+  transform: translateY(28px) scale(.985);
+  animation: loginReveal .9s cubic-bezier(.22,1,.36,1) .18s forwards;
 }
 
 .login-header { display: flex; align-items: center; gap: 14px; margin-bottom: 28px; }
@@ -198,9 +261,31 @@ async function handleLogin() {
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(135deg, #1d4ed8, #0f766e);
   box-shadow: 0 14px 30px rgba(29, 78, 216, .25);
+  animation: logoFloat 5.6s ease-in-out infinite;
 }
 .login-header h2 { font-size: 24px; font-weight: 800; color: #0f172a; }
 .login-header p { font-size: 13px; color: #64748b; margin-top: 3px; }
+
+.login-status {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(254, 242, 242, .96), rgba(255, 255, 255, .98));
+  border: 1px solid rgba(239, 68, 68, .18);
+}
+
+.login-status-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #b91c1c;
+}
+
+.login-status-desc {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #7f1d1d;
+}
 
 :deep(.el-form-item) { margin-bottom: 20px; }
 :deep(.el-form-item__label) { font-size: 13px; color: #475569; font-weight: 600; }
@@ -226,6 +311,43 @@ async function handleLogin() {
 .demo-accounts span {
   font-size: 12px; color: #334155; background: rgba(248,250,252,.88); padding: 10px 12px; border-radius: 12px;
   border: 1px solid rgba(148,163,184,.18); font-family: 'JetBrains Mono', 'Courier New', monospace;
+}
+
+@keyframes loginReveal {
+  from {
+    opacity: 0;
+    transform: translateY(22px) scale(.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes loginOrbFloat {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(24px, -18px, 0) scale(1.06); }
+}
+
+@keyframes logoFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .login-shell::before,
+  .login-shell::after,
+  .login-hero,
+  .hero-badge,
+  .login-hero h1,
+  .login-hero p,
+  .hero-stats div,
+  .login-card,
+  .logo-mark {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
 }
 
 @media (max-width: 980px) {

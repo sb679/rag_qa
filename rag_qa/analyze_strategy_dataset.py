@@ -31,7 +31,7 @@ def analyze_dataset(file_path="classify_data/strategy_classification_8000.json")
     
     # 分析每种策略的文本长度
     print(f"\n📏 文本长度分析:")
-    for strategy in ["直接检索", "假设问题检索", "子查询检索", "场景重构检索"]:
+    for strategy in ["直接检索", "查询扩展检索", "查询分解检索", "问题重写检索"]:
         queries = [item['query'] for item in data if item['strategy'] == strategy]
         lengths = [len(q) for q in queries]
         
@@ -69,15 +69,15 @@ def analyze_dataset(file_path="classify_data/strategy_classification_8000.json")
         print(f"  ✓ 无重复查询")
     
     # 3. 检查策略标签有效性
-    valid_strategies = {"直接检索", "假设问题检索", "子查询检索", "场景重构检索"}
+    valid_strategies = {"直接检索", "查询扩展检索", "查询分解检索", "问题重写检索"}
     invalid_items = [item for item in data if item['strategy'] not in valid_strategies]
     if invalid_items:
         print(f"  ⚠️  发现 {len(invalid_items)} 条无效策略标签")
     else:
         print(f"  ✓ 所有策略标签有效")
     
-    # 4. 场景重构检索的质量检查
-    scenario_queries = [item['query'] for item in data if item['strategy'] == '场景重构检索']
+    # 4. 问题重写检索的质量检查
+    scenario_queries = [item['query'] for item in data if item['strategy'] == '问题重写检索']
     complex_indicators = []
     for query in scenario_queries:
         has_numbers = any(c.isdigit() for c in query)
@@ -88,7 +88,7 @@ def analyze_dataset(file_path="classify_data/strategy_classification_8000.json")
             complex_indicators.append(query)
     
     quality_rate = len(complex_indicators) / len(scenario_queries) * 100 if scenario_queries else 0
-    print(f"\n  场景重构检索质量:")
+    print(f"\n  问题重写检索质量:")
     print(f"    符合复杂问题特征的样本：{len(complex_indicators)}/{len(scenario_queries)} ({quality_rate:.1f}%)")
     
     if quality_rate < 80:

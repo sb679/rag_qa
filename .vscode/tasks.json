@@ -1,33 +1,234 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "Env: Self-check (.venv)",
-      "type": "shell",
-      "command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\.vscode\\check_env.ps1\"",
-      "group": "build",
-      "problemMatcher": []
-    },
-    {
-      "label": "Backend: Run Uvicorn (.venv)",
-      "type": "shell",
-      "command": "& \"${workspaceFolder}\\rag_qa\\.venv\\Scripts\\python.exe\" -m uvicorn main:app --reload --host 0.0.0.0 --port 8000",
-      "options": {
-        "cwd": "${workspaceFolder}\\rag_qa\\web\\backend"
-      },
-      "dependsOn": [
-        "Env: Self-check (.venv)"
-      ],
-      "dependsOrder": "sequence",
-      "isBackground": true,
-      "problemMatcher": []
-    },
-    {
-      "label": "Repo: Self-check",
-      "type": "shell",
-      "command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\scripts\\repo_self_check.ps1\"",
-      "group": "build",
-      "problemMatcher": []
-    }
-  ]
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Env: Self-check (.venv)",
+			"type": "shell",
+			"command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\.vscode\\check_env.ps1\"",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Backend: Run Uvicorn (.venv)",
+			"type": "shell",
+			"command": "& \"${workspaceFolder}\\rag_qa\\.venv\\Scripts\\python.exe\" -m uvicorn main:app --reload --reload-dir \"${workspaceFolder}\\rag_qa\\web\\backend\" --reload-dir \"${workspaceFolder}\\rag_qa\\core\" --reload-dir \"${workspaceFolder}\\rag_qa\\base\" --host 0.0.0.0 --port 8000",
+			"options": {
+				"cwd": "${workspaceFolder}\\rag_qa\\web\\backend",
+				"env": {
+					"EDURAG_DEV_FAST_STARTUP": "1"
+				}
+			},
+			"dependsOn": [
+				"Env: Self-check (.venv)"
+			],
+			"dependsOrder": "sequence",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Backend: Run Uvicorn Stable (.venv)",
+			"type": "shell",
+			"command": "& \"${workspaceFolder}\\rag_qa\\.venv\\Scripts\\python.exe\" -m uvicorn main:app --host 0.0.0.0 --port 8000",
+			"options": {
+				"cwd": "${workspaceFolder}\\rag_qa\\web\\backend",
+				"env": {
+					"EDURAG_DEV_FAST_STARTUP": "1"
+				}
+			},
+			"dependsOn": [
+				"Env: Self-check (.venv)"
+			],
+			"dependsOrder": "sequence",
+			"isBackground": true,
+			"problemMatcher": []
+		},
+		{
+			"label": "Project: Run stable local app",
+			"dependsOn": [
+				"Backend: Run Uvicorn Stable (.venv)",
+				"Frontend: Run Vite"
+			],
+			"dependsOrder": "parallel",
+			"problemMatcher": []
+		},
+		{
+			"label": "Repo: Self-check",
+			"type": "shell",
+			"command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\scripts\\repo_self_check.ps1\"",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Release: Preflight Check",
+			"type": "shell",
+			"command": "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; & \"${workspaceFolder}\\scripts\\release_precheck.ps1\"",
+			"group": "build",
+			"problemMatcher": []
+		},
+		{
+			"label": "Project: Stop local services",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"$ports = 8000,8001,5173,5174,5175,19000,19001,19530; $stopped = @(); foreach ($p in $ports) { $conns = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; foreach ($c in $conns) { $pid = $c.OwningProcess; if ($pid -and ($stopped -notcontains $pid)) { try { Stop-Process -Id $pid -Force -ErrorAction Stop; $stopped += $pid; Write-Output \\\"stopped_pid=$pid port=$p\\\" } catch { Write-Output \\\"failed_pid=$pid port=$p reason=$($_.Exception.Message)\\\" } } } }; if (-not $stopped.Count) { Write-Output \\\"no_listening_process_found\\\" }"
+			]
+		},
+		{
+			"label": "Project: Stop local services (retry)",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"$ports = 8000,8001,5173,5174,5175,19000,19001,19530; $stopped = @(); foreach ($p in $ports) { $conns = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; foreach ($c in $conns) { $procId = $c.OwningProcess; if ($procId -and ($stopped -notcontains $procId)) { try { Stop-Process -Id $procId -Force -ErrorAction Stop; $stopped += $procId; Write-Output \\\"stopped_pid=$procId port=$p\\\" } catch { Write-Output \\\"failed_pid=$procId port=$p reason=$($_.Exception.Message)\\\" } } } }; if (-not $stopped.Count) { Write-Output \\\"no_listening_process_found\\\" }"
+			]
+		},
+		{
+			"label": "Project: Docker down all",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"Set-Location \"d:\\Graduation-Project\"; docker compose -f docker-compose.yml down; docker compose -f docker-compose.monitoring.yml down; if (Test-Path \"docker-compose.prod.yml\") { docker compose -f docker-compose.prod.yml down }"
+			]
+		},
+		{
+			"label": "Project: Verify listening ports",
+			"type": "shell",
+			"command": "$ports = 8000,8001,5173,5174,5175,19000,19001,19530; $results = @(); foreach ($p in $ports) { $conns = Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue; if ($conns) { foreach ($c in $conns) { $proc = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; $name = if ($proc) { $proc.ProcessName } else { 'unknown' }; $results += ('port={0} pid={1} name={2}' -f $p, $c.OwningProcess, $name) } } }; if ($results.Count -eq 0) { Write-Output 'all_target_ports_free' } else { $results | ForEach-Object { Write-Output $_ } }"
+		},
+		{
+			"label": "Project: Verify ports final",
+			"type": "shell",
+			"command": "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { @(8000,8001,5173,5174,5175,19000,19001,19530) -contains $_.LocalPort } | Select-Object LocalPort,OwningProcess | Sort-Object LocalPort | Format-Table -HideTableHeaders"
+		},
+		{
+			"label": "Project: Kill residual 8000",
+			"type": "shell",
+			"command": "Stop-Process -Id 27036 -Force; Write-Output \"killed_27036\""
+		},
+		{
+			"label": "Project: Verify ports after kill",
+			"type": "shell",
+			"command": "Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { @(8000,8001,5173,5174,5175,19000,19001,19530) -contains $_.LocalPort } | Select-Object LocalPort,OwningProcess | Sort-Object LocalPort | Format-Table -HideTableHeaders"
+		},
+		{
+			"label": "Project: Inspect port 8000",
+			"type": "shell",
+			"command": "$c = Get-NetTCPConnection -State Listen -LocalPort 8000 -ErrorAction SilentlyContinue; if ($c) { $c | Format-List LocalAddress,LocalPort,State,OwningProcess; try { Get-Process -Id $c[0].OwningProcess | Format-List Id,ProcessName,Path } catch { Write-Output \"process_lookup_failed\" } } else { Write-Output \"port_8000_not_listening\" }"
+		},
+		{
+			"label": "Project: Netstat 8000",
+			"type": "shell",
+			"command": "netstat -ano | findstr :8000"
+		},
+		{
+			"label": "Project: Taskkill 27036",
+			"type": "shell",
+			"command": "taskkill /PID 27036 /F"
+		},
+		{
+			"label": "Project: Kill related processes",
+			"type": "shell",
+			"command": "$procs = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ( $_.CommandLine -match 'Graduation-Project' -or $_.CommandLine -match 'uvicorn' -or $_.CommandLine -match 'vite' -or $_.CommandLine -match 'rag_qa\\web\\backend' -or $_.CommandLine -match 'rag_qa\\web\\frontend') }; if (-not $procs) { Write-Output 'no_related_processes' } else { $ids = $procs | Select-Object -ExpandProperty ProcessId -Unique; foreach ($id in $ids) { try { Stop-Process -Id $id -Force -ErrorAction Stop; Write-Output \"stopped_pid=$id\" } catch { Write-Output \"failed_pid=$id\" } } }"
+		},
+		{
+			"label": "Project: Final port check",
+			"type": "shell",
+			"command": "netstat -ano | findstr /R \":8000 .*LISTENING\\|:8001 .*LISTENING\\|:5173 .*LISTENING\\|:5174 .*LISTENING\\|:5175 .*LISTENING\\|:19000 .*LISTENING\\|:19001 .*LISTENING\\|:19530 .*LISTENING\""
+		},
+		{
+			"label": "Project: Final port check 2",
+			"type": "shell",
+			"command": "$lines = netstat -ano | Select-String ':8000|:8001|:5173|:5174|:5175|:19000|:19001|:19530' | Select-String 'LISTENING'; if ($lines) { $lines | ForEach-Object { $_.Line } } else { Write-Output 'all_target_ports_free' }"
+		},
+		{
+			"label": "Frontend: Run Vite",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"dev",
+				"--",
+				"--host",
+				"127.0.0.1",
+				"--port",
+				"5173"
+			],
+			"options": {
+				"cwd": "${workspaceFolder}\\rag_qa\\web\\frontend"
+			},
+			"isBackground": true,
+			"group": "build"
+		},
+		{
+			"label": "Teacher Demo: Migrate Experiment Artifacts",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"${workspaceFolder}\\rag_qa\\teacher_demo_experiments\\migrate_artifacts.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Teacher Demo: Run Migration Script Direct",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-File",
+				"d:\\Graduation-Project\\rag_qa\\teacher_demo_experiments\\migrate_artifacts.ps1"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Teacher Demo: Run K/M Benchmark Metallurgy20 Minimal 20260520",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"Set-Location \"d:\\Graduation-Project\\rag_qa\"; .\\.venv\\Scripts\\python.exe .\\benchmark_km_triplets.py --dataset .\\teacher_demo_experiments\\04_ragas_dataset_quality\\artifacts\\generated_datasets\\metallurgy_safety_testset.json --max-queries 20 --output .\\teacher_demo_experiments\\01_chunking_performance\\artifacts\\benchmark_km_report_metallurgy20_minimal_20260520.json"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Teacher Demo: Generate Relative Benchmark Artifacts",
+			"type": "shell",
+			"command": "powershell",
+			"args": [
+				"-NoProfile",
+				"-ExecutionPolicy",
+				"Bypass",
+				"-Command",
+				"Set-Location \"d:\\Graduation-Project\\rag_qa\\teacher_demo_experiments\\01_chunking_performance\"; ..\\..\\.venv\\Scripts\\python.exe .\\generate_chunking_benchmark_artifacts.py --report .\\artifacts\\benchmark_km_report_metallurgy20_minimal_20260520.json --output-tag relative_view_20260520"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
 }

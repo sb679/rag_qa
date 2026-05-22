@@ -16,9 +16,11 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import Response
 import time
 import uuid
+from pathlib import Path
 from prometheus_client import Counter, Histogram, CONTENT_TYPE_LATEST, generate_latest
 from base import logger, log_event, ErrorAlertMonitor, Config
-from routers import chat, sessions, knowledge, dataset, testgen, auth, feedback, kb_version, users
+from routers import chat, sessions, knowledge, dataset, testgen, auth, feedback, kb_version, users, wechat_annotator
+from rag_runtime import get_rag_service
 
 _startup_errors = []
 _config = Config()
@@ -39,7 +41,7 @@ _http_request_duration_ms = Histogram(
 )
 
 app = FastAPI(
-    title       = "EduRAG 采矿安全智能问答系统",
+    title       = "采矿安全智能问答系统",
     description = "基于 RAG 的采矿安全知识问答 API",
     version     = "2.0.0",
 )
@@ -61,6 +63,7 @@ app.include_router(sessions.router,  prefix="/api/sessions",  tags=["会话"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["知识库"])
 app.include_router(dataset.router,   prefix="/api/dataset",   tags=["数据集管理"])
 app.include_router(testgen.router,   prefix="/api/testgen",   tags=["测试集生成"])
+app.include_router(wechat_annotator.router, prefix="/api/wechat-annotator", tags=["公众号标注"])
 
 
 @app.middleware("http")
@@ -143,9 +146,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.on_event("startup")
 def startup_tasks():
     chat.start_examples_scheduler()
+    wechat_annotator.ensure_agent_task_worker_started()
+    if os.getenv("EDURAG_DEV_FAST_STARTUP", "").strip().lower() in {"1", "true", "yes", "on"}:
+        logger.info("开发快速启动已启用，跳过 RAG 启动预热")
+        return
     try:
-        import rag_service
-        rag_service.load_or_refresh_chat_examples(force=False)
+        get_rag_service().load_or_refresh_chat_examples(force=False)
     except Exception as e:
         _startup_errors.append(str(e))
         logger.exception("启动预热失败")
@@ -167,4 +173,9 @@ def metrics():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    reload_dirs = [
+        str(Path(_backend_dir)),
+        str(Path(_rag_qa_path) / "core"),
+        str(Path(_rag_qa_path) / "base"),
+    ]
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, reload_dirs=reload_dirs)

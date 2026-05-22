@@ -1,24 +1,4 @@
 services:
-  # MySQL 基础设施
-  mysql:
-    image: mysql:8.0.31
-    container_name: graduation-project-mysql
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --character-set-server=utf8mb4
-      - --collation-server=utf8mb4_unicode_ci
-    environment:
-      MYSQL_ROOT_PASSWORD: ${EDURAG_MYSQL_ROOT_PASSWORD:-demo-mysql-root-change-me}
-      MYSQL_DATABASE: subjects_kg
-      MYSQL_ROOT_HOST: '%'
-    ports:
-      - "3307:3306"
-    volumes:
-      - mysql-data:/var/lib/mysql
-    networks:
-      - graduation-network
-    restart: unless-stopped
-
   # MinIO 对象存储
   minio:
     image: minio/minio:latest
@@ -28,10 +8,51 @@ services:
       MINIO_ROOT_USER: ${EDURAG_MINIO_ROOT_USER:-demo-minio-user}
       MINIO_ROOT_PASSWORD: ${EDURAG_MINIO_ROOT_PASSWORD:-demo-minio-password-change-me}
     ports:
-      - "19000:9000"
-      - "19001:9001"
+      - "${EDURAG_MINIO_API_HOST_PORT:-19000}:9000"
+      - "${EDURAG_MINIO_CONSOLE_HOST_PORT:-19001}:9001"
     volumes:
       - minio-data:/data
+    networks:
+      - graduation-network
+    restart: unless-stopped
+
+  # Milvus 依赖的 etcd
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    container_name: graduation-project-etcd
+    environment:
+      ETCD_AUTO_COMPACTION_MODE: revision
+      ETCD_AUTO_COMPACTION_RETENTION: "1000"
+      ETCD_QUOTA_BACKEND_BYTES: "4294967296"
+      ETCD_SNAPSHOT_COUNT: "50000"
+    command: >-
+      etcd
+      --advertise-client-urls=http://etcd:2379
+      --listen-client-urls=http://0.0.0.0:2379
+      --data-dir=/etcd
+    volumes:
+      - milvus-etcd-data:/etcd
+    networks:
+      - graduation-network
+    restart: unless-stopped
+
+  # Milvus 向量数据库
+  milvus:
+    image: milvusdb/milvus:v2.4.15
+    container_name: graduation-project-milvus
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${EDURAG_MINIO_ROOT_USER:-demo-minio-user}
+      MINIO_SECRET_ACCESS_KEY: ${EDURAG_MINIO_ROOT_PASSWORD:-demo-minio-password-change-me}
+    ports:
+      - "${EDURAG_MILVUS_HOST_PORT:-19530}:19530"
+    depends_on:
+      - etcd
+      - minio
+    volumes:
+      - milvus-data:/var/lib/milvus
     networks:
       - graduation-network
     restart: unless-stopped
@@ -43,20 +64,20 @@ services:
       dockerfile: web/Dockerfile.backend
     container_name: graduation-project-backend
     ports:
-      - "8000:8000"
+      - "${EDURAG_BACKEND_HOST_PORT:-8000}:8000"
     environment:
       - PYTHONUNBUFFERED=1
-      - EDURAG_MYSQL_HOST=mysql
-      - EDURAG_MYSQL_PORT=3306
-      - EDURAG_MYSQL_USER=root
-      - EDURAG_MYSQL_PASSWORD=${EDURAG_MYSQL_ROOT_PASSWORD:-demo-mysql-root-change-me}
-      - EDURAG_MYSQL_DATABASE=subjects_kg
       - EDURAG_STORAGE_BACKEND=minio
       - EDURAG_MINIO_ENDPOINT=minio:9000
       - EDURAG_MINIO_ACCESS_KEY=${EDURAG_MINIO_ROOT_USER:-demo-minio-user}
       - EDURAG_MINIO_SECRET_KEY=${EDURAG_MINIO_ROOT_PASSWORD:-demo-minio-password-change-me}
       - EDURAG_MINIO_BUCKET=edurag-knowledge
       - EDURAG_MINIO_SECURE=false
+      - EDURAG_MILVUS_HOST=milvus
+      - EDURAG_MILVUS_PORT=19530
+    depends_on:
+      - minio
+      - milvus
     networks:
       - graduation-network
     volumes:
@@ -69,15 +90,18 @@ services:
       dockerfile: Dockerfile
     container_name: graduation-project-frontend
     ports:
-      - "5173:5173"
+      - "${EDURAG_FRONTEND_HOST_PORT:-5173}:5173"
     environment:
       - VITE_API_PROXY_TARGET=http://backend:8000
+    depends_on:
+      - backend
     networks:
       - graduation-network
 
 volumes:
-  mysql-data:
   minio-data:
+  milvus-etcd-data:
+  milvus-data:
 
 networks:
   graduation-network:

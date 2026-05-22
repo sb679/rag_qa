@@ -36,12 +36,29 @@ class OCRPDFLoader(BaseLoader):
         self.save_interval = save_interval  # 增量保存间隔
         # 缓存文件路径（与原文件同目录）
         self.cache_file_path = file_path + '.ocr_cache.json'
+        self.temp_cache_file_path = self.cache_file_path + '.tmp'
         # OCR 可按配置关闭（例如数字化 PDF 场景）。
         self.enable_image_ocr = bool(conf.OCR_ENABLE and conf.PDF_IMAGE_OCR_ENABLE)
         self.ocr_engine = None
         if self.enable_image_ocr:
             from edu_document_loaders.edu_ocr import get_ocr
             self.ocr_engine = get_ocr()
+
+    def _load_cache_if_valid(self, cache_path: str):
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+
+            file_stat = os.stat(self.file_path)
+            if (cache_data.get('file_size') == file_stat.st_size and
+                    cache_data.get('file_mtime') == file_stat.st_mtime):
+                return cache_data
+
+            logger.info(f"缓存文件与源文件不匹配，重新 OCR: {cache_path}")
+        except Exception as e:
+            logger.warning(f"加载缓存失败：{e}，将重新 OCR")
+
+        return None
 
     def lazy_load(self) -> Iterator[Document]:
         # <-- Does not take any arguments
@@ -59,28 +76,36 @@ class OCRPDFLoader(BaseLoader):
     def pdf2text(self):
         # 尝试加载缓存
         if self.use_cache and os.path.exists(self.cache_file_path):
-            try:
-                with open(self.cache_file_path, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-                # 验证文件是否被修改（通过比较文件大小和修改时间）
-                file_stat = os.stat(self.file_path)
-                if (cache_data.get('file_size') == file_stat.st_size and 
-                    cache_data.get('file_mtime') == file_stat.st_mtime):
-                    logger.info(f"使用 OCR 缓存：{self.file_path}")
-                    return cache_data['content']
-                else:
-                    logger.info(f"文件已修改，重新 OCR: {self.file_path}")
-            except Exception as e:
-                logger.warning(f"加载缓存失败：{e}，将重新 OCR")
+            cache_data = self._load_cache_if_valid(self.cache_file_path)
+            if cache_data is not None:
+                logger.info(f"使用 OCR 缓存：{self.file_path}")
+                return cache_data['content']
             
         # 打开 pdf 文件
         doc = fitz.open(self.file_path)
         ## 获取页数
         # print(f'len(doc)-->{len(doc)}')
         resp = ""
+        start_page = 0
+
+        if self.use_cache and os.path.exists(self.temp_cache_file_path):
+            temp_cache_data = self._load_cache_if_valid(self.temp_cache_file_path)
+            if temp_cache_data is not None:
+                processed_pages = int(temp_cache_data.get('processed_pages') or 0)
+                if 0 < processed_pages < doc.page_count:
+                    resp = temp_cache_data.get('content', '')
+                    start_page = processed_pages
+                    logger.info(f"从增量缓存恢复：已处理 {processed_pages}/{doc.page_count} 页")
+                elif processed_pages >= doc.page_count:
+                    logger.info(f"增量缓存已覆盖全部页面，直接返回缓存内容：{self.file_path}")
+                    return temp_cache_data.get('content', '')
+
         b_unit = tqdm(total=doc.page_count, desc="OCRPDFLoader context page index: 0")
+        if start_page:
+            b_unit.update(start_page)
         
-        for i, page in enumerate(doc):
+        for i in range(start_page, doc.page_count):
+            page = doc[i]
             b_unit.set_description("OCRPDFLoader context page index: {}".format(i))
             b_unit.refresh()
             # 提取文本：默认使用 "text" 模式提取文本。
@@ -124,7 +149,7 @@ class OCRPDFLoader(BaseLoader):
             
         # 最终保存完整缓存
         if self.use_cache:
-            self._save_final_cache(resp)
+            self._save_final_cache(resp, doc.page_count)
             
         return resp
     
@@ -141,14 +166,13 @@ class OCRPDFLoader(BaseLoader):
                 'is_incremental': True
             }
             # 保存到临时缓存文件
-            temp_cache_path = self.cache_file_path + '.tmp'
-            with open(temp_cache_path, 'w', encoding='utf-8') as f:
+            with open(self.temp_cache_file_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, ensure_ascii=False, indent=2)
             logger.info(f"增量缓存已保存：已处理 {processed_pages}/{total_pages} 页")
         except Exception as e:
             logger.warning(f"增量缓存保存失败：{e}")
     
-    def _save_final_cache(self, content: str):
+    def _save_final_cache(self, content: str, total_pages: int):
         """保存最终完整缓存"""
         try:
             file_stat = os.stat(self.file_path)
@@ -156,7 +180,8 @@ class OCRPDFLoader(BaseLoader):
                 'file_size': file_stat.st_size,
                 'file_mtime': file_stat.st_mtime,
                 'content': content,
-                'processed_pages': file_stat.st_size,  # 标记为完成
+                'processed_pages': total_pages,
+                'total_pages': total_pages,
                 'is_incremental': False
             }
             with open(self.cache_file_path, 'w', encoding='utf-8') as f:
@@ -164,9 +189,8 @@ class OCRPDFLoader(BaseLoader):
             logger.info(f"OCR 缓存已保存：{self.cache_file_path}")
             
             # 删除临时缓存文件
-            temp_cache_path = self.cache_file_path + '.tmp'
-            if os.path.exists(temp_cache_path):
-                os.remove(temp_cache_path)
+            if os.path.exists(self.temp_cache_file_path):
+                os.remove(self.temp_cache_file_path)
                 logger.info(f"已删除临时缓存文件")
         except Exception as e:
             logger.warning(f"保存缓存失败：{e}")

@@ -16,8 +16,8 @@ if _backend_dir not in sys.path:
 from fastapi import APIRouter
 from fastapi import APIRouter, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from schemas import ChatRequest
-import rag_service
+from schemas import ChatRequest, CompareRequest
+from rag_runtime import rag_service
 from edu_document_loaders import OCRIMGLoader
 
 router = APIRouter()
@@ -77,6 +77,7 @@ async def chat_send(request: ChatRequest):
             session_id    = request.session_id,
             source_filter = request.source_filter,
             include_source_details = request.include_source_details,
+            enable_compare         = request.enable_compare,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
@@ -92,7 +93,10 @@ async def chat_send(request: ChatRequest):
 
 @router.get("/examples")
 def get_examples():
-    return {"items": rag_service.get_chat_examples()}
+    return {
+        "items": rag_service.get_chat_examples(),
+        "hot_windows": rag_service.get_chat_hot_windows(limit=5),
+    }
 
 
 @router.post("/send-image")
@@ -102,6 +106,7 @@ async def chat_send_image(
     session_id: str | None = Form(None),
     source_filter: str | None = Form(None),
     include_source_details: bool = Form(True),
+    enable_compare: bool = Form(False),
 ):
     """
     先 OCR 图片，再把识别文本拼入问题进入现有 RAG 流。
@@ -132,6 +137,7 @@ async def chat_send_image(
                 session_id    = session_id,
                 source_filter = source_filter,
                 include_source_details = include_source_details,
+                enable_compare         = enable_compare,
             ):
                 if event.get("type") == "retrieval_info":
                     event = {
@@ -150,3 +156,19 @@ async def chat_send_image(
         )
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@router.post("/compare")
+async def compare_send(request: CompareRequest):
+    async def generate():
+        async for event in rag_service.stream_compare_response(request.query):
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

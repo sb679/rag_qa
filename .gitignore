@@ -48,6 +48,16 @@ tmp_trainer/
 *.bak
 
 # Data, models, and generated content
+data/
+rag_qa/bert_logs/
+rag_qa/bert_results/
+rag_qa/bert_strategy_classifier_v2/
+rag_qa/macbert_query_classifier_v2/
+rag_qa/classify_data/
+rag_qa/ragas_paper_bundle/
+rag_qa/teacher_demo_experiments/**/artifacts/
+rag_qa/teacher_demo_experiments/**/model_snapshot/
+rag_qa/wandb/
 rag_qa/models/
 rag_qa/bert_query_classifier_new/
 rag_qa/bert_strategy_classifier/

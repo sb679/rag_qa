@@ -19,7 +19,7 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
-import rag_service
+from rag_runtime import rag_service
 from core.auth_manager import get_auth_manager
 from base import logger
 

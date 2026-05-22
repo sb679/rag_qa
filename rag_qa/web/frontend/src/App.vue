@@ -1,11 +1,16 @@
 <template>
-  <div v-if="isLoggedIn" class="app-root">
+  <el-config-provider :locale="zhCn">
+    <div v-if="isLoggedIn" class="app-root">
     <!-- 顶部导航栏 -->
     <el-header class="app-header">
       <div class="header-brand">
-        <el-icon :size="22" color="#409eff"><ChatDotRound /></el-icon>
-        <span class="brand-name">EduRAG</span>
-        <span class="brand-sub">采矿安全智能问答系统</span>
+        <div class="brand-mark">
+          <el-icon :size="20" color="#fff"><ChatDotRound /></el-icon>
+        </div>
+        <div class="brand-copy">
+          <span class="brand-name">采矿安全智能问答系统</span>
+          <span class="brand-sub">Knowledge retrieval, traceability and feedback loop</span>
+        </div>
       </div>
 
       <el-menu
@@ -25,7 +30,10 @@
           <el-icon><Setting /></el-icon>系统配置
         </el-menu-item>
         <el-menu-item index="/dashboard">
-          <el-icon><DataAnalysis /></el-icon>驾驶仓
+          <el-icon><DataAnalysis /></el-icon>驾驶舱
+        </el-menu-item>
+        <el-menu-item v-if="showWechatAnnotatorEntry" index="/wechat-annotator">
+          <el-icon><DataBoard /></el-icon>公众号多 Agent
         </el-menu-item>
         <el-menu-item v-if="isSupervisor" index="/employees">
           <el-icon><User /></el-icon>员工管理
@@ -33,9 +41,10 @@
       </el-menu>
 
       <div class="header-right">
-        <el-tag :type="online ? 'success' : 'warning'" size="small" effect="light">
-          {{ online ? '● 系统正常' : '● 演示模式' }}
-        </el-tag>
+        <div class="runtime-pill" :class="online ? 'online' : 'offline'">
+          <span class="runtime-dot"></span>
+          <span>{{ online ? '系统正常' : '演示模式' }}</span>
+        </div>
         
         <el-dropdown @command="handleCommand" class="user-dropdown">
           <div class="user-info">
@@ -95,21 +104,23 @@
         <img :src="avatarPreviewUrl || defaultAvatar" alt="avatar preview" class="avatar-preview-image" />
       </div>
     </el-dialog>
-  </div>
-  <router-view v-else />
+    </div>
+    <router-view v-else />
+  </el-config-provider>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { ChatDotRound, DataBoard, Setting, DataAnalysis, User, ArrowDown } from '@element-plus/icons-vue'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { knowledgeAPI, authAPI } from '@/api'
 import { useStore } from '@/store'
 
 const route = useRoute()
 const router = useRouter()
 const { state, isLoggedIn, isSupervisor, logout, updateProfile: updateStoreProfile } = useStore()
+const showWechatAnnotatorEntry = computed(() => isSupervisor.value && import.meta.env.VITE_ENABLE_WECHAT_ANNOTATOR === 'true')
 
 const activeRoute = computed(() => route.path)
 const user = computed(() => state.user)
@@ -142,9 +153,12 @@ onMounted(async () => {
   if (isLoggedIn.value) {
     try {
       await authAPI.getProfile()
-    } catch {
-      handleAuthExpired()
-      return
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        handleAuthExpired()
+        return
+      }
+      ElMessage.warning('当前登录校验服务暂时不可用，已保留本地登录态，请稍后重试。')
     }
   }
 
@@ -248,64 +262,174 @@ function openAvatarPreview(url) {
 
 <style>
  :root {
-  --edurag-bg: #f4f7fb;
-  --edurag-surface: rgba(255, 255, 255, 0.88);
-  --edurag-surface-strong: rgba(255, 255, 255, 0.96);
-  --edurag-border: rgba(148, 163, 184, 0.18);
+  --edurag-bg: #f3f6fb;
+  --edurag-surface: rgba(255, 255, 255, 0.74);
+  --edurag-surface-strong: rgba(255, 255, 255, 0.9);
+  --edurag-border: rgba(148, 163, 184, 0.22);
   --edurag-text: #0f172a;
   --edurag-text-soft: #64748b;
-  --edurag-primary: #2563eb;
-  --edurag-primary-2: #0ea5e9;
-  --edurag-accent: #14b8a6;
+  --edurag-primary: #0f5bd8;
+  --edurag-primary-2: #00a6c7;
+  --edurag-accent: #0f766e;
   --edurag-warm: #f59e0b;
-  --edurag-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
-  --edurag-shadow-strong: 0 22px 60px rgba(15, 23, 42, 0.14);
-  --edurag-radius: 18px;
+  --edurag-shadow: 0 22px 50px rgba(15, 23, 42, 0.08);
+  --edurag-shadow-strong: 0 30px 80px rgba(15, 23, 42, 0.14);
+  --edurag-shadow-soft: 0 12px 30px rgba(15, 23, 42, 0.06);
+  --edurag-radius: 22px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html {
+  scroll-behavior: smooth;
+  background: #edf3fb;
+}
 body {
-  font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  font-family: 'Trebuchet MS', 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
   background:
-    radial-gradient(circle at 12% 12%, rgba(37, 99, 235, 0.12), transparent 30%),
-    radial-gradient(circle at 88% 88%, rgba(20, 184, 166, 0.12), transparent 32%),
-    linear-gradient(145deg, #f8fafc 0%, #eef2ff 52%, #ecfeff 100%);
+    radial-gradient(circle at 10% 10%, rgba(15, 91, 216, 0.12), transparent 24%),
+    radial-gradient(circle at 76% 18%, rgba(20, 184, 166, 0.09), transparent 28%),
+    radial-gradient(circle at 86% 84%, rgba(249, 115, 22, 0.08), transparent 22%),
+    linear-gradient(155deg, #f8fbff 0%, #eef4ff 52%, #eefaf8 100%);
   color: var(--edurag-text);
 }
 
-html { scroll-behavior: smooth; }
 #app { min-height: 100vh; }
 
-.app-root  { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+.app-root  {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+}
+.app-root::before,
+.app-root::after {
+  content: '';
+  position: absolute;
+  inset: auto;
+  width: 420px;
+  height: 420px;
+  border-radius: 999px;
+  pointer-events: none;
+  filter: blur(70px);
+  opacity: 0.5;
+  z-index: -1;
+}
+.app-root::before {
+  top: -140px;
+  right: -120px;
+  background: rgba(14, 165, 233, 0.16);
+}
+.app-root::after {
+  left: -180px;
+  bottom: -180px;
+  background: rgba(15, 118, 110, 0.12);
+}
 .app-header {
-  height: 60px !important;
+  height: 72px !important;
   display: flex;
   align-items: center;
-  padding: 0 24px;
-  background: rgba(255, 255, 255, 0.82);
-  border-bottom: 1px solid rgba(228, 231, 237, 0.72);
-  box-shadow: 0 2px 14px rgba(15, 23, 42, 0.08);
+  padding: 0 28px;
+  background: rgba(255, 255, 255, 0.7);
+  border-bottom: 1px solid rgba(228, 231, 237, 0.48);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
   z-index: 100;
   flex-shrink: 0;
-  backdrop-filter: blur(14px);
+  backdrop-filter: blur(20px);
 }
-.header-brand { display: flex; align-items: center; gap: 8px; margin-right: 32px; white-space: nowrap; }
-.brand-name   { font-size: 17px; font-weight: 800; background: linear-gradient(135deg, var(--edurag-primary) 0%, #7c3aed 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
-.brand-sub    { font-size: 12px; color: #909399; margin-left: 2px; font-weight: 500; }
-.header-nav   { flex: 1; border-bottom: none !important; }
+.header-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-right: 32px;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #0f172a 0%, #0f5bd8 55%, #14b8a6 100%);
+  box-shadow: 0 16px 28px rgba(15, 91, 216, 0.24);
+}
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.brand-name   {
+  font-size: 17px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, #0f172a 0%, var(--edurag-primary) 52%, var(--edurag-accent) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.brand-sub    {
+  font-size: 11px;
+  color: #64748b;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.header-nav   {
+  flex: 1 1 0;
+  min-width: 0;
+  border-bottom: none !important;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.header-nav::-webkit-scrollbar { display: none; }
 .header-nav .el-menu-item {
-  font-size: 14px; height: 60px; line-height: 60px; font-weight: 500;
-  transition: all 0.28s ease; border-radius: 12px 12px 0 0;
+  font-size: 14px; height: 72px; line-height: 72px; font-weight: 700;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.28s ease; border-radius: 18px 18px 0 0;
 }
-.header-nav .el-menu-item:hover { color: var(--edurag-primary); background: rgba(37, 99, 235, 0.05); }
-.header-right { margin-left: 16px; display: flex; align-items: center; gap: 16px; }
+.header-nav .el-menu-item:hover { color: var(--edurag-primary); background: rgba(15, 91, 216, 0.05); }
+.header-right { margin-left: 16px; display: flex; align-items: center; gap: 16px; flex: 0 0 auto; min-width: max-content; }
+.runtime-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: var(--edurag-shadow-soft);
+}
+.runtime-pill.online {
+  color: #047857;
+}
+.runtime-pill.offline {
+  color: #b45309;
+}
+.runtime-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 14%, transparent);
+}
 .user-dropdown { cursor: pointer; }
 .user-info {
-  display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-  transition: all 0.28s ease; border: 1px solid transparent;
+  display: flex; align-items: center; gap: 8px; padding: 7px 10px 7px 8px; border-radius: 999px;
+  transition: all 0.28s ease; border: 1px solid rgba(148, 163, 184, 0.14);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow: var(--edurag-shadow-soft);
 }
-.user-info:hover { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.16); }
-.user-name { font-size: 13px; color: #606266; font-weight: 600; }
+.user-info:hover { background: rgba(255, 255, 255, 0.88); border-color: rgba(15, 91, 216, 0.16); }
+.user-name { font-size: 13px; color: #334155; font-weight: 700; }
 .is-icon { margin-left: 4px; }
 .app-main     { flex: 1; padding: 0 !important; overflow: hidden; background: transparent; }
 .avatar-editor { display: flex; align-items: center; gap: 12px; }
@@ -318,5 +442,49 @@ html { scroll-behavior: smooth; }
   object-fit: contain;
   border-radius: 10px;
   border: 1px solid #ebeef5;
+}
+
+@media (max-width: 1440px) {
+  .runtime-pill {
+    display: none;
+  }
+
+  .header-nav .el-menu-item {
+    padding: 0 12px;
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 1080px) {
+  .brand-sub {
+    display: none;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-header {
+    padding: 0 18px;
+  }
+
+  .header-brand {
+    margin-right: 12px;
+  }
+
+  .brand-name {
+    font-size: 15px;
+  }
+
+  .header-right {
+    gap: 10px;
+  }
+
+  .user-name {
+    display: none;
+  }
+
+  .header-nav .el-menu-item {
+    padding: 0 12px;
+    font-size: 13px;
+  }
 }
 </style>

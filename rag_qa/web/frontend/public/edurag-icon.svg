@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title>EduRAG Icon</title>
+  <desc>Blue and teal application icon for the EduRAG mining safety assistant.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a"/>
+      <stop offset="58%" stop-color="#0f5bd8"/>
+      <stop offset="100%" stop-color="#14b8a6"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+  </defs>
+  <rect x="36" y="36" width="440" height="440" rx="132" fill="url(#bg)"/>
+  <circle cx="384" cy="140" r="42" fill="#f59e0b" opacity="0.92"/>
+  <path d="M120 318c0-84.9 68.8-153.7 153.7-153.7 33.9 0 65.3 11 90.8 29.6l-39.8 53.8c-14.3-10-31.7-15.9-50.4-15.9-48.8 0-88.3 39.6-88.3 88.3s39.5 88.3 88.3 88.3c29.5 0 55.5-14.5 71.5-36.7H254v-61.5h174.4c1.3 8.1 2 16.4 2 24.9 0 96.1-77.9 174-174 174S120 414.1 120 318z" fill="url(#accent)"/>
+  <path d="M146 120l54 54-22 22-54-54z" fill="#f8fafc" opacity="0.85"/>
+</svg>

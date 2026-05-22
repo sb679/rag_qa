@@ -31,6 +31,10 @@ from base import logger, Config
 conf = Config()
 
 
+def _escape_milvus_str(value: str) -> str:
+    return (value or "").replace('\\', '\\\\').replace('"', '\\"')
+
+
 # core/vector_store.py
 # 定义 VectorStore 类，封装向量存储和检索功能
 class VectorStore:
@@ -256,8 +260,14 @@ class VectorStore:
             # 使用 BGE-Reranker 计算每个配对的得分
             scores = self.reranker.predict(pairs)
             # print(f'scores--》{scores}')
+            # 把 rerank 分数写回 doc.metadata，便于上层做相关性阈值判断
+            try:
+                for doc, sc in zip(parent_docs, scores):
+                    doc.metadata["rerank_score"] = float(sc)
+            except Exception:
+                pass
             # 根据得分从高到低排序文档
-            ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), reverse=True)]
+            ranked_parent_docs = [doc for _, doc in sorted(zip(scores, parent_docs), key=lambda x: x[0], reverse=True)]
         # 如果没有父文档，返回空列表
         # 如果没有父文档，返回空列表
         else:
@@ -278,6 +288,8 @@ class VectorStore:
             return {
                 "total_chunks": 0,
                 "total_books": 0,
+                "indexed_vector_count": 0,
+                "indexed_document_count": 0,
                 "source_count": 0,
                 "avg_chunks_per_book": 0,
                 "sources": [],
@@ -290,24 +302,11 @@ class VectorStore:
         file_id_map = {}
 
         try:
-            rows = []
-            offset = 0
-            batch_size = 16384
-            while offset < total:
-                limit = min(batch_size, total - offset)
-                batch_rows = self.client.query(
-                    collection_name=self.collection_name,
-                    filter="",
-                    output_fields=["source", "file_name", "file_path", "file_id"],
-                    limit=limit,
-                    offset=offset,
-                )
-                if not batch_rows:
-                    break
-                rows.extend(batch_rows)
-                if len(batch_rows) < limit:
-                    break
-                offset += len(batch_rows)
+            rows = self.query_all_rows(
+                filter_expr="",
+                output_fields=["source", "file_name", "file_path", "file_id"],
+                batch_size=1000,
+            )
         except Exception as e:
             logger.warning(f"读取知识库明细失败，降级展示汇总: {e}")
             rows = []
@@ -356,11 +355,35 @@ class VectorStore:
         return {
             "total_chunks": total,
             "total_books": len(files),
+            "indexed_vector_count": total,
+            "indexed_document_count": len(files),
             "source_count": len(sources),
             "avg_chunks_per_book": round(total / len(files), 1) if files else 0,
             "sources": sources,
             "files": files,
         }
+
+    def query_all_rows(self, filter_expr: str, output_fields, batch_size: int = 1000):
+        rows = []
+        iterator = self.client.query_iterator(
+            collection_name=self.collection_name,
+            filter=filter_expr,
+            output_fields=output_fields,
+            batch_size=batch_size,
+            limit=-1,
+        )
+        try:
+            while True:
+                batch_rows = iterator.next()
+                if not batch_rows:
+                    break
+                rows.extend(batch_rows)
+        finally:
+            try:
+                iterator.close()
+            except Exception:
+                pass
+        return rows
 
     def get_file_rows(self, file_id: str, limit: int = 100000):
         if not file_id:
@@ -399,6 +422,24 @@ class VectorStore:
             logger.warning(f"按名称查询文件失败(source={source}, file_name={file_name}): {e}")
             return []
 
+    def get_file_rows_by_source_and_name(self, source: str, file_name: str):
+        if not source or not file_name:
+            return []
+
+        safe_source = _escape_milvus_str(source)
+        safe_name = _escape_milvus_str(file_name)
+        expr = f'source == "{safe_source}" and file_name == "{safe_name}"'
+
+        try:
+            return self.query_all_rows(
+                filter_expr=expr,
+                output_fields=["id", "file_id", "file_name", "file_path", "source"],
+                batch_size=1000,
+            )
+        except Exception as e:
+            logger.warning(f"按 source/name 查询文件失败(source={source}, file_name={file_name}): {e}")
+            return []
+
     def delete_file_by_id(self, file_id: str):
         rows = self.get_file_rows(file_id)
         if not rows:
@@ -415,6 +456,28 @@ class VectorStore:
                 raise
 
         return {"deleted_chunks": len(ids), "file_paths": file_paths}
+
+    def delete_file_by_source_and_name(self, source: str, file_name: str):
+        rows = self.get_file_rows_by_source_and_name(source, file_name)
+        if not rows:
+            return {"deleted_chunks": 0, "file_paths": [], "matched_file_ids": []}
+
+        ids = [row.get("id") for row in rows if row.get("id")]
+        file_paths = list({row.get("file_path") for row in rows if row.get("file_path")})
+        matched_file_ids = list({row.get("file_id") for row in rows if row.get("file_id")})
+
+        if ids:
+            try:
+                self.client.delete(collection_name=self.collection_name, ids=ids)
+            except Exception as e:
+                logger.error(f"按 source/name 删除向量失败(source={source}, file_name={file_name}): {e}")
+                raise
+
+        return {
+            "deleted_chunks": len(ids),
+            "file_paths": file_paths,
+            "matched_file_ids": matched_file_ids,
+        }
 
     def _get_unique_parent_docs(self, sub_chunks):
         # 初始化集合，用于存储已处理的父块内容（去重）

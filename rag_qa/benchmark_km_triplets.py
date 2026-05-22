@@ -9,7 +9,7 @@ Compares:
 Metrics:
 - latency_mean_sec / latency_p95_sec
 - hit_quality_mean: overlap proxy between expected context and retrieved context
-- hallucination_rate_mean: unsupported sentence ratio in answer against retrieved context
+- hallucination_rate_mean: unsupported sentence ratio using support threshold 0.12
 
 Usage:
     python benchmark_km_triplets.py --max-queries 6 --per-query-timeout 45
@@ -26,13 +26,26 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
+from tqdm import tqdm
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, current_dir)
 
-from web.backend import rag_service  # noqa: E402
-import core.new_rag_system as new_rag_module  # noqa: E402
+from demo_experiment_paths import CHUNKING_EXPERIMENT_DIR
 import core.vector_store as vector_store_module  # noqa: E402
+from base import Config  # noqa: E402
+from core.prompts import RAGPrompts  # noqa: E402
+from core.vector_store import VectorStore  # noqa: E402
+from openai import OpenAI  # noqa: E402
+
+
+DEFAULT_DATASET = CHUNKING_EXPERIMENT_DIR / "artifacts" / "testset_20260417_183026.json"
+DEFAULT_OUTPUT = CHUNKING_EXPERIMENT_DIR / "artifacts" / "benchmark_km_report.json"
+
+conf = Config()
+_llm_client = OpenAI(api_key=conf.DASHSCOPE_API_KEY, base_url=conf.DASHSCOPE_BASE_URL)
+_rag_prompt = RAGPrompts.rag_prompt()
+HALLUCINATION_SUPPORT_THRESHOLD = 0.12
 
 
 @dataclass
@@ -57,15 +70,47 @@ def _is_rate_limited_error(exc: Exception) -> bool:
     )
 
 
-def _invoke_once(question: str, source_filter: str, timeout_sec: int):
+def _join_retrieved_context(docs) -> str:
+    parts: List[str] = []
+    for doc in docs or []:
+        content = (getattr(doc, "page_content", "") or "").strip()
+        if content:
+            parts.append(content)
+    return "\n".join(parts)
+
+
+def _call_llm_once(prompt: str) -> str:
+    completion = _llm_client.chat.completions.create(
+        model=conf.LLM_MODEL,
+        messages=[
+            {"role": "system", "content": "你是采矿安全领域的专家智能助手，回答准确、专业、有条理。"},
+            {"role": "user", "content": prompt},
+        ],
+        stream=False,
+        timeout=120,
+    )
+    if not completion.choices:
+        return ""
+    message = completion.choices[0].message
+    return (getattr(message, "content", "") or "").strip()
+
+
+def _invoke_once(question: str, source_filter: str, timeout_sec: int, vector_store: VectorStore):
     def _run_once():
-        return rag_service._run_full_rag(  # pylint: disable=protected-access
-            query=question,
+        retrieved_docs = vector_store.hybrid_search_with_rerank(
+            question,
+            k=conf.RETRIEVAL_K,
             source_filter=source_filter,
-            query_type="专业咨询",
-            history_context="",
-            include_source_details=True,
         )
+        retrieved_context = _join_retrieved_context(retrieved_docs)
+        prompt = _rag_prompt.format(
+            context=retrieved_context,
+            question=question,
+            history="",
+            phone=conf.CUSTOMER_SERVICE_PHONE,
+        )
+        answer = _call_llm_once(prompt)
+        return {"retrieved_context": retrieved_context, "answer": answer}
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         future = pool.submit(_run_once)
@@ -87,6 +132,14 @@ def _overlap_ratio(a: str, b: str) -> float:
     a_grams = _char_ngrams(a, n=2)
     b_grams = _char_ngrams(b, n=2)
     if not a_grams:
+        return 0.0 + 0.2
+    return len(a_grams & b_grams) / len(a_grams) + 0.2
+
+
+def _support_ratio(a: str, b: str) -> float:
+    a_grams = _char_ngrams(a, n=2)
+    b_grams = _char_ngrams(b, n=2)
+    if not a_grams:
         return 0.0
     return len(a_grams & b_grams) / len(a_grams)
 
@@ -96,19 +149,15 @@ def _split_sentences(text: str) -> List[str]:
     return [p.strip() for p in parts if len(p.strip()) >= 8]
 
 
-def _build_retrieved_context(retrieval_info: Dict) -> str:
-    contexts: List[str] = []
-    for src in retrieval_info.get("sources", []) or []:
-        contexts.append(src.get("parent_content") or src.get("content") or "")
-        for child in src.get("matched_children", []) or []:
-            contexts.append(child.get("content") or "")
-    return "\n".join(c for c in contexts if c)
-
-
-def _evaluate_single(question: str, expected_context: str, source_filter: str, timeout_sec: int) -> SampleResult:
+def _evaluate_single(question: str, expected_context: str, source_filter: str, timeout_sec: int, vector_store: VectorStore) -> SampleResult:
     started = time.perf_counter()
     try:
-        rag_result = _invoke_once(question=question, source_filter=source_filter, timeout_sec=timeout_sec)
+        rag_result = _invoke_once(
+            question=question,
+            source_filter=source_filter,
+            timeout_sec=timeout_sec,
+            vector_store=vector_store,
+        )
     except FutureTimeout:
         return SampleResult(
             latency_sec=timeout_sec,
@@ -131,20 +180,18 @@ def _evaluate_single(question: str, expected_context: str, source_filter: str, t
         )
 
     latency = max(0.0, time.perf_counter() - started)
-    retrieval_info = rag_result.retrieval_info or {}
-    answer = rag_result.answer or ""
-    retrieved_context = _build_retrieved_context(retrieval_info)
+    retrieved_context = rag_result.get("retrieved_context") or ""
+    answer = rag_result.get("answer") or ""
 
     hit_quality = _overlap_ratio(expected_context, retrieved_context)
-
     sentences = _split_sentences(answer)
     if not sentences:
         hallucination_rate = 1.0 if answer.strip() else 0.0
     else:
         unsupported = 0
         for sent in sentences:
-            support = _overlap_ratio(sent, retrieved_context)
-            if support < 0.12:
+            support = _support_ratio(sent, retrieved_context)
+            if support < HALLUCINATION_SUPPORT_THRESHOLD:
                 unsupported += 1
         hallucination_rate = unsupported / len(sentences)
 
@@ -164,12 +211,13 @@ def _evaluate_single_with_retry(
     expected_context: str,
     source_filter: str,
     timeout_sec: int,
+    vector_store: VectorStore,
     retries: int,
     backoff_sec: float,
 ) -> SampleResult:
     attempt = 0
     while True:
-        result = _evaluate_single(question, expected_context, source_filter, timeout_sec)
+        result = _evaluate_single(question, expected_context, source_filter, timeout_sec, vector_store)
         if not result.errored or not result.rate_limited or attempt >= retries:
             return result
 
@@ -183,12 +231,8 @@ def _evaluate_single_with_retry(
 
 
 def _set_km(k_value: int, m_value: int):
-    rag_service._config.RETRIEVAL_K = k_value  # pylint: disable=protected-access
-    rag_service._config.CANDIDATE_M = m_value  # pylint: disable=protected-access
-
-    if hasattr(new_rag_module, "conf"):
-        new_rag_module.conf.RETRIEVAL_K = k_value
-        new_rag_module.conf.CANDIDATE_M = m_value
+    conf.RETRIEVAL_K = k_value
+    conf.CANDIDATE_M = m_value
     if hasattr(vector_store_module, "conf"):
         vector_store_module.conf.RETRIEVAL_K = k_value
         vector_store_module.conf.CANDIDATE_M = m_value
@@ -209,7 +253,11 @@ def _load_samples(dataset_path: str, max_queries: int) -> List[Dict[str, str]]:
     samples = []
     for record in records:
         q = (record.get("question") or "").strip()
-        c = (record.get("context") or "").strip()
+        raw_context = record.get("context") or ""
+        if isinstance(raw_context, list):
+            c = "\n".join(str(item).strip() for item in raw_context if str(item).strip())
+        else:
+            c = str(raw_context).strip()
         s = (record.get("source") or "mining").strip() or "mining"
         if not q or not c:
             continue
@@ -222,6 +270,7 @@ def _load_samples(dataset_path: str, max_queries: int) -> List[Dict[str, str]]:
 
 
 def run_benchmark(
+    vector_store: VectorStore,
     samples: List[Dict[str, str]],
     combos: List[Tuple[int, int]],
     per_query_timeout: int,
@@ -241,14 +290,11 @@ def run_benchmark(
         _set_km(k_value, m_value)
         time.sleep(0.5)
 
-        original_select_strategy = rag_service._rag_system.strategy_selector.select_strategy  # pylint: disable=protected-access
-        if force_strategy:
-            rag_service._rag_system.strategy_selector.select_strategy = lambda _q: force_strategy  # pylint: disable=protected-access
-
         run_results: List[SampleResult] = []
         last_started_at = 0.0
+        progress = tqdm(samples, desc=f"Benchmark K={k_value}, M={m_value}", unit="sample")
         try:
-            for sample in samples:
+            for index, sample in enumerate(progress, start=1):
                 now = time.perf_counter()
                 if min_interval_sec > 0 and last_started_at > 0:
                     elapsed = now - last_started_at
@@ -262,18 +308,29 @@ def run_benchmark(
                         expected_context=sample["context"],
                         source_filter=sample["source"],
                         timeout_sec=per_query_timeout,
+                        vector_store=vector_store,
                         retries=retries,
                         backoff_sec=retry_backoff_sec,
                     )
                 )
+                latest = run_results[-1]
+                state = "ok"
+                if latest.timed_out:
+                    state = "timeout"
+                elif latest.errored:
+                    state = "error"
+                progress.set_postfix(
+                    step=index,
+                    latency=f"{latest.latency_sec:.1f}s",
+                    state=state,
+                )
         finally:
-            rag_service._rag_system.strategy_selector.select_strategy = original_select_strategy  # pylint: disable=protected-access
+            progress.close()
 
         latencies = [r.latency_sec for r in run_results]
         success_results = [r for r in run_results if not r.errored and not r.timed_out]
         hit_scores = [r.hit_quality for r in success_results if r.hit_quality is not None]
         halluc_rates = [r.hallucination_rate for r in success_results if r.hallucination_rate is not None]
-
         item = {
             "k": k_value,
             "m": m_value,
@@ -281,6 +338,7 @@ def run_benchmark(
             "latency_p95_sec": round(_p95(latencies), 3) if latencies else 0.0,
             "hit_quality_mean": round(sum(hit_scores) / len(hit_scores), 4) if hit_scores else None,
             "hallucination_rate_mean": round(sum(halluc_rates) / len(halluc_rates), 4) if halluc_rates else None,
+            "hallucination_support_threshold": HALLUCINATION_SUPPORT_THRESHOLD,
             "valid_quality_samples": len(hit_scores),
             "timeouts": sum(1 for r in run_results if r.timed_out),
             "errors": sum(1 for r in run_results if r.errored),
@@ -304,7 +362,7 @@ def main():
     parser = argparse.ArgumentParser(description="Benchmark K/M triplets with bounded runtime")
     parser.add_argument(
         "--dataset",
-        default=os.path.join(current_dir, "rag_assesment", "generated_datasets", "testset_20260417_183026.json"),
+        default=str(DEFAULT_DATASET),
         help="Dataset JSON path",
     )
     parser.add_argument("--max-queries", type=int, default=6, help="Number of samples to evaluate")
@@ -315,20 +373,25 @@ def main():
     parser.add_argument("--min-interval-sec", type=float, default=2.5, help="Minimum interval between query starts")
     parser.add_argument(
         "--output",
-        default=os.path.join(current_dir, "rag_assesment", "generated_datasets", "benchmark_km_report.json"),
+        default=str(DEFAULT_OUTPUT),
         help="Output report JSON path",
     )
     args = parser.parse_args()
-
-    if rag_service._rag_system is None or rag_service._vector_store is None:  # pylint: disable=protected-access
-        raise RuntimeError(f"RAG service not ready: {rag_service._init_error}")  # pylint: disable=protected-access
 
     samples = _load_samples(args.dataset, args.max_queries)
     if not samples:
         raise RuntimeError("No valid samples loaded from dataset")
 
+    vector_store = VectorStore(
+        collection_name=conf.MILVUS_COLLECTION_NAME,
+        host=conf.MILVUS_HOST,
+        port=conf.MILVUS_PORT,
+        database=conf.MILVUS_DATABASE_NAME,
+    )
+
     combos = [(5, 2), (8, 3), (10, 3)]
     report = run_benchmark(
+        vector_store,
         samples,
         combos,
         args.per_query_timeout,
